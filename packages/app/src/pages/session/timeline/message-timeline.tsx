@@ -39,12 +39,14 @@ import { SessionRetry } from "@opencode-ai/ui/session-retry"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { StickyAccordionHeader } from "@opencode-ai/ui/sticky-accordion-header"
 import { TextField } from "@opencode-ai/ui/text-field"
+import { Markdown } from "@opencode-ai/ui/markdown"
 import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
 import type {
   AssistantMessage,
   Message as MessageType,
   Part as PartType,
+  ReasoningPart,
   ToolPart,
   UserMessage,
 } from "@opencode-ai/sdk/v2"
@@ -125,14 +127,65 @@ const markBoundaryGesture = (input: {
   }
 }
 
-function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSummaries: boolean }) {
+function TimelineThinkingRow(props: {
+  sessionID: string | undefined
+  userMessageID: string
+  reasoningHeading?: string
+  showReasoningSummaries: boolean
+}) {
   const language = useLanguage()
+  const sync = useSync()
+  const [expanded, setExpanded] = createSignal(false)
+
+  const reasoningParts = createMemo(() => {
+    if (!props.sessionID) return []
+    const messages = sync().data.message[props.sessionID] ?? []
+    const assistantMsgs = messages.filter(
+      (m): m is AssistantMessage => m.role === "assistant" && m.parentID === props.userMessageID,
+    )
+    return assistantMsgs.flatMap((msg) => {
+      const parts = sync().data.part[msg.id] ?? []
+      return parts.filter((p): p is ReasoningPart => p.type === "reasoning" && !!p.text?.trim())
+    })
+  })
+
+  const reasoningText = createMemo(() =>
+    reasoningParts()
+      .map((p) => p.text)
+      .filter(Boolean)
+      .join("\n\n"),
+  )
+
+  const toggle = () => setExpanded((prev) => !prev)
 
   return (
-    <div data-slot="session-turn-thinking">
-      <TextShimmer text={language.t("ui.sessionTurn.status.thinking")} />
-      <Show when={!props.showReasoningSummaries}>
-        <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
+    <div data-slot="session-turn-thinking-wrapper">
+      <div
+        data-slot="session-turn-thinking"
+        onClick={toggle}
+        style={{ cursor: "pointer", "user-select": "none" }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            toggle()
+          }
+        }}
+        aria-expanded={expanded()}
+      >
+        <Show when={expanded()} fallback={<Icon name="chevron-right" size="small" />}>
+          <Icon name="chevron-down" size="small" />
+        </Show>
+        <TextShimmer text={language.t("ui.sessionTurn.status.thinking")} />
+        <Show when={!props.showReasoningSummaries}>
+          <TextReveal text={props.reasoningHeading} class="session-turn-thinking-heading" travel={25} duration={700} />
+        </Show>
+      </div>
+      <Show when={expanded() && reasoningText()}>
+        <div data-slot="session-turn-thinking-content">
+          <Markdown text={reasoningText()} cacheKey="thinking-reasoning" streaming={true} />
+        </div>
       </Show>
     </div>
   )
@@ -1126,6 +1179,8 @@ export function MessageTimeline(props: {
           <TimelineRowFrame row={thinkingRow}>
             <div data-slot="session-turn-message-container" class="w-full px-4 md:px-5">
               <TimelineThinkingRow
+                sessionID={sessionID()}
+                userMessageID={thinkingRow().userMessageID}
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
               />

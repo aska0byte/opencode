@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { isStalePermissionSubmitError } from "../../../../src/cli/cmd/tui/routes/session/permission"
-import { isStaleQuestionSubmitError } from "../../../../src/cli/cmd/tui/routes/session/question"
+import { isStalePermissionSubmitError } from "../../../../../tui/src/routes/session/permission"
+import { isStaleQuestionSubmitError } from "../../../../../tui/src/routes/session/question"
 
 describe("tui prompt stale submit classifiers", () => {
   test("question accepts typed SDK bodies and request-not-found messages for the displayed request", () => {

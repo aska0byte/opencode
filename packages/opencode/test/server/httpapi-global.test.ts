@@ -1,6 +1,6 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Context, Effect, Layer, Option } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
@@ -38,7 +38,7 @@ const apiLayer = HttpRouter.serve(
       upgrade: () => Effect.void,
     }),
   ),
-  Layer.provide(ServerAuth.Config.layer({ password: Option.none(), username: "opencode" })),
+  Layer.provide(ServerAuth.Config.layer({ password: "", username: "opencode" })),
 )
 const it = testEffect(apiLayer)
 

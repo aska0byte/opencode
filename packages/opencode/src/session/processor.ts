@@ -737,7 +737,12 @@ export const layer = Layer.effect(
               tokensReasoning: usage.tokens.reasoning,
               tokensCacheRead: usage.tokens.cache.read,
               tokensCacheWrite: usage.tokens.cache.write,
-            }).pipe(Effect.tapError((e) => Effect.log("recordStep failed: " + String(e))), Effect.ignore, Effect.forkIn(scope))
+            }).pipe(
+              Effect.provideService(Database.Service, database),
+              Effect.tapError((e) => Effect.log("recordStep failed: " + String(e))),
+              Effect.ignore,
+              Effect.forkIn(scope),
+            )
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
               if (patch.files.length) {

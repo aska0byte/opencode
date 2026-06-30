@@ -1,6 +1,6 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Context, Effect, Layer, Option, Ref } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { MoveSession } from "@opencode-ai/core/control-plane/move-session"
@@ -44,7 +44,7 @@ const apiLayer = HttpRouter.serve(
       moveSession: (value) => Ref.set(called, value),
     }),
   ),
-  Layer.provide(ServerAuth.Config.layer({ password: Option.none(), username: "opencode" })),
+  Layer.provide(ServerAuth.Config.layer({ password: "", username: "opencode" })),
 )
 const it = testEffect(apiLayer)
 

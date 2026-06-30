@@ -126,7 +126,7 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
       .client.permission.respond({ sessionID: perm.sessionID, permissionID: perm.id, response })
       .catch((err: unknown) => {
         if (isStalePermissionResponseFailure(err, perm)) {
-          sync.set("permission", perm.sessionID, (list) => removePermissionRequest(list, perm))
+          sync().set("permission", perm.sessionID, (list) => removePermissionRequest(list, perm))
           return
         }
 

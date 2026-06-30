@@ -252,7 +252,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const cleanupStale = () => {
     replied = true
     cache.delete(cacheKey)
-    sync.set("question", props.request.sessionID, (list) => removeQuestionRequest(list, props.request))
+    sync().set("question", props.request.sessionID, (list) => removeQuestionRequest(list, props.request))
   }
 
   const onQuestionError = (err: unknown) => {

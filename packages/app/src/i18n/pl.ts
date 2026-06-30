@@ -409,6 +409,7 @@ export const dict = {
   "error.page.description": "Wystąpił błąd podczas ładowania aplikacji.",
   "error.page.details.label": "Szczegóły błędu",
   "error.page.action.restart": "Restartuj",
+  "error.page.action.goBack": "Wstecz",
   "error.page.action.report": "Zgłoś błąd",
   "error.page.action.reported": "Błąd zgłoszony",
   "error.page.action.checking": "Sprawdzanie...",

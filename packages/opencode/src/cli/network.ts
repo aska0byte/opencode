@@ -7,12 +7,17 @@ const options = {
   port: {
     type: "number" as const,
     describe: "port to listen on",
-    default: 0,
+    default: 4096,
   },
   hostname: {
     type: "string" as const,
     describe: "hostname to listen on",
-    default: "127.0.0.1",
+    default: "0.0.0.0",
+  },
+  password: {
+    type: "string" as const,
+    describe: "basic auth password (defaults to OPENCODE_SERVER_PASSWORD)",
+    alias: ["p"],
   },
   mdns: {
     type: "boolean" as const,

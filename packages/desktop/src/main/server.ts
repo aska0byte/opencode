@@ -2,7 +2,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
 import type { Details } from "electron"
-import { getLogger } from "./logging"
+import { getLogger, write as writeLog } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
 import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
@@ -55,6 +55,7 @@ export function preferAppEnv(userDataPath: string) {
 export async function spawnLocalServer(
   hostname: string,
   port: number,
+  username: string,
   password: string,
   options: SpawnLocalServerOptions,
 ) {
@@ -73,10 +74,14 @@ export async function spawnLocalServer(
     options.onStderr?.(`utility process gone reason=${details.reason} exitCode=${details.exitCode}`)
   }
 
+  let sidecarState: "starting" | "healthy" | "stopping" = "starting"
+
   app.on("child-process-gone", onProcessGone)
   child.once("exit", (code) => {
+    const state = sidecarState
     exited = true
     app.off("child-process-gone", onProcessGone)
+    writeLog("utility", `sidecar exited state=${state} code=${code}`)
     options.onExit?.(code)
     exit.resolve(code)
   })
@@ -131,6 +136,7 @@ export async function spawnLocalServer(
       type: "start",
       hostname,
       port,
+      username,
       password,
       userDataPath: options.userDataPath,
     })
@@ -140,7 +146,7 @@ export async function spawnLocalServer(
   })
 
   const wait = (async () => {
-    const url = `http://${hostname}:${port}`
+    const url = `http://127.0.0.1:${port}`
     let healthy = false
     const gone = exit.promise.then((code) => {
       if (healthy) return
@@ -150,8 +156,9 @@ export async function spawnLocalServer(
     const ready = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) {
+        if (await checkHealth(url, username, password)) {
           healthy = true
+          sidecarState = "healthy"
           return
         }
       }
@@ -167,6 +174,7 @@ export async function spawnLocalServer(
       stop: () => {
         if (stopping) return stopping
         if (exited) return Promise.resolve()
+        sidecarState = "stopping"
         child.postMessage({ type: "stop" })
         stopping = Promise.race([
           exit.promise.then(() => undefined),
@@ -181,7 +189,7 @@ export async function spawnLocalServer(
   }
 }
 
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
+export async function checkHealth(url: string, username?: string, password?: string | null): Promise<boolean> {
   let healthUrl: URL
   try {
     healthUrl = new URL("/global/health", url)
@@ -191,7 +199,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`${username ?? "opencode"}:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 

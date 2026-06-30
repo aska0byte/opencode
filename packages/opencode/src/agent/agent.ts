@@ -122,30 +122,22 @@ export const layer = Layer.effect(
           external_directory: {
             "*": "ask",
             ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
-          } satisfies Record<string, "allow" | "ask" | "deny">
-
-          const defaults = Permission.fromConfig({
+          },
+          question: "deny",
+          plan_enter: "deny",
+          plan_exit: "deny",
+          repo_clone: "deny",
+          repo_overview: "deny",
+          // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
+          read: {
             "*": "allow",
-            doom_loop: "ask",
-            external_directory: {
-              "*": "ask",
-              ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
-            },
-            question: "deny",
-            plan_enter: "deny",
-            plan_exit: "deny",
-            repo_clone: "deny",
-            repo_overview: "deny",
-            // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
-            read: {
-              "*": "allow",
-              "*.env": "ask",
-              "*.env.*": "ask",
-              "*.env.example": "allow",
-            },
-          })
+            "*.env": "ask",
+            "*.env.*": "ask",
+            "*.env.example": "allow",
+          },
+        })
 
-          const user = Permission.fromConfig(cfg.permission ?? {})
+        const user = Permission.fromConfig(cfg.permission ?? {})
 
           const agents: Record<string, Info> = {
             build: {
@@ -355,6 +347,12 @@ export const layer = Layer.effect(
 
         const list = Effect.fnUntraced(function* () {
           const cfg = yield* config.get()
+          // Sync agent models from current config (plugin hooks may have updated cfg.agent)
+          for (const [key, value] of Object.entries(cfg.agent ?? {})) {
+            if (agents[key] && value.model) {
+              agents[key].model = Provider.parseModel(value.model)
+            }
+          }
           return pipe(
             agents,
             values(),
@@ -496,6 +494,7 @@ export const node = LayerNode.make(layer, [
   Plugin.node,
   Skill.node,
   Provider.node,
+  RuntimeFlags.node,
   locationServiceMapNode,
 ])
 

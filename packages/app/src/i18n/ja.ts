@@ -408,6 +408,7 @@ export const dict = {
   "error.page.description": "アプリケーションの読み込み中にエラーが発生しました。",
   "error.page.details.label": "エラー詳細",
   "error.page.action.restart": "再起動",
+  "error.page.action.goBack": "戻る",
   "error.page.action.report": "エラーを報告",
   "error.page.action.reported": "エラーを報告しました",
   "error.page.action.checking": "確認中...",

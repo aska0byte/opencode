@@ -217,6 +217,7 @@ function formatError(error: unknown, t: Translator): string {
 
 interface ErrorPageProps {
   error: unknown
+  onDismiss?: () => void
 }
 
 export const ErrorPage: Component<ErrorPageProps> = (props) => {
@@ -293,6 +294,11 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
           hideLabel
         />
         <div class="flex flex-row items-center justify-center gap-3 flex-wrap max-w-64">
+          <Show when={props.onDismiss}>
+            <Button size="large" variant="ghost" onClick={props.onDismiss}>
+              {language.t("error.page.action.goBack")}
+            </Button>
+          </Show>
           <Button size="large" onClick={platform.restart}>
             {language.t("error.page.action.restart")}
           </Button>

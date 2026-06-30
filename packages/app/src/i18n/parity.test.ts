@@ -36,4 +36,10 @@ describe("i18n parity", () => {
     expect(zh["session.files.openFolder"]).toBe("打开文件夹")
     expect(zht["session.files.openFolder"]).toBe("開啟資料夾")
   })
+
+  test("send to chat label is present in English and Chinese locales", () => {
+    expect(en["session.files.sendToChat"]).toBe("Send to Chat")
+    expect(zh["session.files.sendToChat"]).toBe("发送到对话框")
+    expect(zht["session.files.sendToChat"]).toBe("傳送至對話框")
+  })
 })

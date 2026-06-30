@@ -4,15 +4,18 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { useServerSDK } from "@/context/server-sdk"
 import { SettingsGeneral } from "./settings-general"
 import { SettingsKeybinds } from "./settings-keybinds"
 import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsServers } from "./settings-servers"
+import { UsageStatsTab } from "@opencode-ai/usage-stats/stats-tab"
 
 export const DialogSettings: Component = () => {
   const language = useLanguage()
   const platform = usePlatform()
+  const serverSDK = useServerSDK()
 
   return (
     <Dialog size="x-large" transition>
@@ -50,6 +53,10 @@ export const DialogSettings: Component = () => {
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </Tabs.Trigger>
+                    <Tabs.Trigger value="usage">
+                      <Icon name="status" />
+                      模型用量
+                    </Tabs.Trigger>
                   </div>
                 </div>
               </div>
@@ -60,20 +67,23 @@ export const DialogSettings: Component = () => {
             </div>
           </div>
         </Tabs.List>
-        <Tabs.Content value="general" class="no-scrollbar">
+        <Tabs.Content value="general" class="no-scrollbar min-h-[520px]">
           <SettingsGeneral />
         </Tabs.Content>
-        <Tabs.Content value="shortcuts" class="no-scrollbar">
+        <Tabs.Content value="shortcuts" class="no-scrollbar min-h-[520px]">
           <SettingsKeybinds />
         </Tabs.Content>
-        <Tabs.Content value="servers" class="no-scrollbar">
+        <Tabs.Content value="servers" class="no-scrollbar min-h-[520px]">
           <SettingsServers />
         </Tabs.Content>
-        <Tabs.Content value="providers" class="no-scrollbar">
+        <Tabs.Content value="providers" class="no-scrollbar min-h-[520px]">
           <SettingsProviders />
         </Tabs.Content>
-        <Tabs.Content value="models" class="no-scrollbar">
+        <Tabs.Content value="models" class="no-scrollbar min-h-[520px]">
           <SettingsModels />
+        </Tabs.Content>
+        <Tabs.Content value="usage" class="no-scrollbar min-h-[520px]">
+          <UsageStatsTab serverUrl={serverSDK().url} />
         </Tabs.Content>
       </Tabs>
     </Dialog>

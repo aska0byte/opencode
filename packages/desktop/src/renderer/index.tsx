@@ -135,7 +135,7 @@ const createPlatform = (): Platform => {
   return {
     platform: "desktop",
     os,
-    version: pkg.version,
+    version: pkg.version + "_魔改版",
 
     async openDirectoryPickerDialog(opts) {
       return window.api.openDirectoryPicker({

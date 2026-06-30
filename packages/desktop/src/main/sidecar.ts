@@ -1,5 +1,15 @@
+import { appendFileSync } from "node:fs"
 import * as http from "node:http"
 import * as tls from "node:tls"
+
+const DIAG_LOG = `${process.env.XDG_STATE_HOME ?? "."}/sidecar-diagnostics.log`
+function diagLog(msg: string) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  try {
+    appendFileSync(DIAG_LOG, line)
+  } catch {}
+  process.stderr.write(`[sidecar-diag] ${msg}\n`)
+}
 
 type NodeHttpWithEnvProxy = typeof http & {
   setGlobalProxyFromEnv: () => void
@@ -14,6 +24,7 @@ type StartCommand = {
   type: "start"
   hostname: string
   port: number
+  username: string
   password: string
   userDataPath: string
 }
@@ -29,6 +40,7 @@ type SidecarMessage =
 type ParentPort = {
   postMessage(message: SidecarMessage): void
   on(event: "message", listener: (event: { data: unknown }) => void): void
+  on(event: "close", listener: () => void): void
 }
 
 type Listener = {
@@ -37,6 +49,20 @@ type Listener = {
 
 const parentPort = getParentPort()
 let listener: Listener | undefined
+let loopMonitor: ReturnType<typeof setInterval> | undefined
+
+process.on("exit", (code, signal) => {
+  diagLog(`EXIT code=${code} signal=${signal} listener=${!!listener}`)
+})
+process.on("uncaughtException", (err) => {
+  diagLog(`UNCAUGHT EXCEPTION: ${err.stack ?? err.message}`)
+})
+process.on("unhandledRejection", (reason) => {
+  diagLog(`UNHANDLED REJECTION: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`)
+})
+parentPort.on("close", () => {
+  diagLog(`PARENT PORT CLOSED — parent disconnected, listener=${!!listener}`)
+})
 
 parentPort.on("message", (event) => {
   const command = parseCommand(event.data)
@@ -50,7 +76,7 @@ parentPort.on("message", (event) => {
 
 async function start(command: StartCommand) {
   try {
-    prepareSidecarEnv(command.password, command.userDataPath)
+    prepareSidecarEnv(command.username, command.password, command.userDataPath)
     ensureLoopbackNoProxy()
     useSystemCertificates()
     useEnvProxy()
@@ -59,10 +85,21 @@ async function start(command: StartCommand) {
     listener = await Server.listen({
       port: command.port,
       hostname: command.hostname,
-      username: "opencode",
+      username: command.username,
       password: command.password,
       cors: ["oc://renderer"],
     })
+
+    let lastLoopCheck = Date.now()
+    loopMonitor = setInterval(() => {
+      const now = Date.now()
+      const lag = now - lastLoopCheck - 5000
+      if (lag > 2000) {
+        diagLog(`EVENT LOOP LAG ${lag}ms — server may be unresponsive`)
+      }
+      lastLoopCheck = now
+    }, 5000)
+
     parentPort.postMessage({ type: "ready" })
   } catch (error) {
     parentPort.postMessage({ type: "error", error: serializeError(error) })
@@ -71,6 +108,10 @@ async function start(command: StartCommand) {
 }
 
 async function stop() {
+  if (loopMonitor) {
+    clearInterval(loopMonitor)
+    loopMonitor = undefined
+  }
   try {
     await listener?.stop()
   } finally {
@@ -80,9 +121,9 @@ async function stop() {
   }
 }
 
-function prepareSidecarEnv(password: string, userDataPath: string) {
+function prepareSidecarEnv(username: string, password: string, userDataPath: string) {
   Object.assign(process.env, {
-    OPENCODE_SERVER_USERNAME: "opencode",
+    OPENCODE_SERVER_USERNAME: username,
     OPENCODE_SERVER_PASSWORD: password,
     XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
   })
@@ -134,12 +175,14 @@ function parseCommand(value: unknown): SidecarCommand | undefined {
   if (command.type !== "start") return
   if (typeof command.hostname !== "string") return
   if (typeof command.port !== "number") return
+  if (typeof command.username !== "string") return
   if (typeof command.password !== "string") return
   if (typeof command.userDataPath !== "string") return
   return {
     type: "start",
     hostname: command.hostname,
     port: command.port,
+    username: command.username,
     password: command.password,
     userDataPath: command.userDataPath,
   }

@@ -455,6 +455,7 @@ export const dict = {
   "error.page.description": "Došlo je do greške prilikom učitavanja aplikacije.",
   "error.page.details.label": "Detalji greške",
   "error.page.action.restart": "Restartuj",
+  "error.page.action.goBack": "Nazad",
   "error.page.action.report": "Prijavi grešku",
   "error.page.action.reported": "Greška prijavljena",
   "error.page.action.checking": "Provjera...",

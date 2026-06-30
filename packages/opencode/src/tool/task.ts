@@ -306,11 +306,23 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
+            const FOREGROUND_TASK_TIMEOUT_MS = 30 * 60 * 1000
             const result = yield* Effect.raceFirst(
-              background.wait({ id: nextSession.id }).pipe(Effect.map((waited) => waited.info)),
+              background.wait({ id: nextSession.id, timeout: FOREGROUND_TASK_TIMEOUT_MS }).pipe(
+                Effect.map((waited) => waited.info),
+              ),
               background.waitForPromotion(nextSession.id),
             )
+
             if (result?.metadata?.background === true) return backgroundResult()
+
+            // Timeout: the job is still running but our wait timed out
+            if (result?.status === "running") {
+              yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true })
+              return yield* Effect.fail(
+                new Error(`Foreground task timed out after ${FOREGROUND_TASK_TIMEOUT_MS}ms`),
+              )
+            }
             if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
             if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
             return {

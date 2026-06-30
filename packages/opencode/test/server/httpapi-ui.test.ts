@@ -202,6 +202,50 @@ describe("HttpApi UI fallback", () => {
     }),
   )
 
+  it.live("redirects the legacy mobile UI root to the web UI root", () =>
+    Effect.gen(function* () {
+      let proxiedUrl: string | undefined
+
+      const response = yield* Effect.gen(function* () {
+        const fs = yield* FSUtil.Service
+        const client = yield* HttpClient.HttpClient
+        return yield* serveUIEffect(HttpServerRequest.fromWeb(new Request("http://localhost/mobile")), {
+          fs,
+          client,
+          disableEmbeddedWebUi: true,
+        })
+      }).pipe(
+        Effect.provide(
+          httpClient(new Response("mobile should not proxy"), (request) => {
+            proxiedUrl = request.url
+          }),
+        ),
+        Effect.map(HttpServerResponse.toWeb),
+      )
+
+      expect(response.status).toBe(302)
+      expect(response.headers.get("location")).toBe("/")
+      expect(proxiedUrl).toBeUndefined()
+    }),
+  )
+
+  it.live("redirects legacy mobile UI subpaths to the web UI root", () =>
+    Effect.gen(function* () {
+      const response = yield* Effect.gen(function* () {
+        const fs = yield* FSUtil.Service
+        const client = yield* HttpClient.HttpClient
+        return yield* serveUIEffect(HttpServerRequest.fromWeb(new Request("http://localhost/mobile/session/ses_123")), {
+          fs,
+          client,
+          disableEmbeddedWebUi: false,
+        })
+      }).pipe(Effect.provide(httpClient(new Response("mobile should not proxy"))), Effect.map(HttpServerResponse.toWeb))
+
+      expect(response.status).toBe(302)
+      expect(response.headers.get("location")).toBe("/")
+    }),
+  )
+
   it.live("strips upstream transfer encoding headers from proxied assets", () =>
     Effect.gen(function* () {
       let proxiedUrl: string | undefined

@@ -198,7 +198,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const prev = scope()
           const next = {
             agent: item.name,
-            model: item.model ?? prev?.model,
+            model: prev?.model ?? item.model,
             variant: item.variant ?? prev?.variant,
           } satisfies State
           const session = id()

@@ -528,6 +528,7 @@ export const dict = {
   "error.page.description.localServerStartup": "An error occurred while starting the local server.",
   "error.page.details.label": "Error Details",
   "error.page.action.restart": "Restart",
+  "error.page.action.goBack": "Go Back",
   "error.page.action.report": "Report Error",
   "error.page.action.reported": "Error Reported",
   "error.page.action.exportLogs": "Export Logs",
@@ -622,6 +623,7 @@ export const dict = {
   "session.files.empty": "No files",
   "session.files.binaryContent": "Binary file (content cannot be displayed)",
   "session.files.openFolder": "Open Folder",
+  "session.files.sendToChat": "Send to Chat",
 
   "session.messages.renderEarlier": "Render earlier messages",
   "session.messages.loadingEarlier": "Loading earlier messages...",
@@ -806,6 +808,7 @@ export const dict = {
   "settings.general.section.sounds": "Sound effects",
   "settings.general.section.feed": "Feed",
   "settings.general.section.display": "Display",
+  "settings.general.section.server": "Server",
 
   "settings.general.row.language.title": "Language",
   "settings.general.row.language.description": "Change the display language for OpenCode",
@@ -857,6 +860,14 @@ export const dict = {
   "settings.general.row.newLayoutDesigns.description": "Enable the redesigned layout, home, composer, and session UI",
   "settings.general.row.pinchZoom.title": "Pinch to zoom",
   "settings.general.row.pinchZoom.description": "Allow trackpad pinch and Ctrl-scroll gestures to zoom",
+
+  "settings.general.row.serverPort.title": "Server Port",
+  "settings.general.row.serverPort.description": "Port number for the local server (1-65535). Default: 4096",
+  "settings.general.row.serverUsername.title": "Username",
+  "settings.general.row.serverUsername.description": "Username for server authentication. Default: opencode",
+  "settings.general.row.serverPassword.title": "Password",
+  "settings.general.row.serverPassword.description": "Password for server authentication. Default: yiyisoftware",
+  "settings.general.row.serverRestart.note": "Changes require app restart to take effect.",
 
   "settings.general.row.wayland.title": "Use native Wayland",
   "settings.general.row.wayland.description": "Disable X11 fallback on Wayland. Requires restart.",

@@ -272,7 +272,7 @@ const lowerToolCall = (part: ToolCallPart): OpenAIResponsesInputItem => ({
   type: "function_call",
   call_id: part.id,
   name: part.name,
-  arguments: ProviderShared.encodeJson(part.input),
+  arguments: ProviderShared.encodeJson(part.input ?? {}),
 })
 
 const lowerReasoning = (part: ReasoningPart): OpenAIResponsesReasoningInput | undefined => {

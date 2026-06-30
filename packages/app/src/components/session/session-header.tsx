@@ -183,7 +183,7 @@ export function SessionHeader() {
   })
   const hotkey = createMemo(() => command.keybind("file.open"))
   const os = createMemo(() => detectOS(platform))
-  const isV2 = settings.general.newLayoutDesigns
+  const isV2 = settings.general.newLayoutDesigns()
   const search = settings.visibility.search
   const status = settings.visibility.status
 

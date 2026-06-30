@@ -1265,7 +1265,19 @@ export const layer = Layer.effect(
         let step = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
+        let stepStartedAt = Date.now()
         while (true) {
+          const now = Date.now()
+          const stepElapsed = now - stepStartedAt
+          if (step > 0 && stepElapsed > 30_000) {
+            yield* Effect.logWarning("loop step slow", {
+              "session.id": sessionID,
+              step,
+              elapsedMs: stepElapsed,
+            })
+          }
+          stepStartedAt = now
+
           yield* status.set(sessionID, { type: "busy" })
           yield* Effect.logInfo("loop", { "session.id": sessionID, step })
 

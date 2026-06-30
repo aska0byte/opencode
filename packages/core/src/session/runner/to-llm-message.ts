@@ -19,7 +19,7 @@ const media = (file: FileAttachment): ContentPart => ({
 })
 
 const toolInput = (tool: SessionMessage.AssistantTool) => {
-  if (tool.state.status !== "pending") return tool.state.input
+  if (tool.state.status !== "pending") return tool.state.input ?? {}
   try {
     return JSON.parse(tool.state.input) as unknown
   } catch {

@@ -1,6 +1,6 @@
 export * as ServerAuth from "./auth"
 
-import { Config as EffectConfig, Context, Effect, Layer, Option, Redacted } from "effect"
+import { Config as EffectConfig, Context, Effect, Layer, Redacted } from "effect"
 
 export type Credentials = {
   password?: string
@@ -13,7 +13,7 @@ export type DecodedCredentials = {
 }
 
 export type Info = {
-  readonly password: Option.Option<string>
+  readonly password: string
   readonly username: string
 }
 
@@ -28,7 +28,7 @@ export class Config extends Context.Service<Config, Info>()("@opencode/ServerAut
       Effect.gen(function* () {
         return Config.of(
           yield* EffectConfig.all({
-            password: EffectConfig.string("OPENCODE_SERVER_PASSWORD").pipe(EffectConfig.option),
+            password: EffectConfig.string("OPENCODE_SERVER_PASSWORD").pipe(EffectConfig.withDefault("opencode")),
             username: EffectConfig.string("OPENCODE_SERVER_USERNAME").pipe(EffectConfig.withDefault("opencode")),
           }),
         )
@@ -38,14 +38,14 @@ export class Config extends Context.Service<Config, Info>()("@opencode/ServerAut
 }
 
 export function required(config: Info) {
-  return Option.isSome(config.password) && config.password.value !== ""
+  return config.password !== ""
 }
 
 export function authorized(credentials: DecodedCredentials, config: Info) {
   return (
-    Option.isSome(config.password) &&
+    config.password !== "" &&
     credentials.username === config.username &&
-    Redacted.value(credentials.password) === config.password.value
+    Redacted.value(credentials.password) === config.password
   )
 }
 

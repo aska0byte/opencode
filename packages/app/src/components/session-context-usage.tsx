@@ -94,10 +94,12 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
           </>
         )}
       </Show>
-      <div class="flex items-center gap-2">
-        <span class="text-text-invert-strong">{cost()}</span>
-        <span class="text-text-invert-base">{language.t("context.usage.cost")}</span>
-      </div>
+      <Show when={metrics().totalCost > 0}>
+        <div class="flex items-center gap-2">
+          <span class="text-text-invert-strong">{cost()}</span>
+          <span class="text-text-invert-base">{language.t("context.usage.cost")}</span>
+        </div>
+      </Show>
     </div>
   )
 

@@ -2,6 +2,7 @@ import { useFile } from "@/context/file"
 import { encodeFilePath } from "@/context/file/path"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { usePrompt } from "@/context/prompt"
 import { useServer } from "@/context/server"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import { ContextMenu } from "@opencode-ai/ui/context-menu"
@@ -251,6 +252,7 @@ export default function FileTree(props: {
   const language = useLanguage()
   const platform = usePlatform()
   const server = useServer()
+  const prompt = usePrompt()
   const level = props.level ?? 0
   const draggable = () => props.draggable ?? true
   const canOpenLocation = createMemo(() => platform.platform === "desktop" && !!platform.openPath && server.isLocal())
@@ -354,22 +356,33 @@ export default function FileTree(props: {
   }
 
   const withNodeContextMenu = (node: FileNode, trigger: JSX.Element) => (
-    <Show when={canOpenLocation() ? fileTreeOpenLocationPath(node) : undefined} fallback={trigger}>
-      {(path) => (
-        <ContextMenu>
-          <ContextMenu.Trigger as="div" class="block w-full">
-            {trigger}
-          </ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Content>
-              <ContextMenu.Item onSelect={() => openLocation(path())}>
-                <ContextMenu.ItemLabel>{language.t("session.files.openFolder")}</ContextMenu.ItemLabel>
-              </ContextMenu.Item>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu>
-      )}
-    </Show>
+    <ContextMenu>
+      <ContextMenu.Trigger as="div" class="block w-full">
+        {trigger}
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content>
+          <ContextMenu.Item onSelect={() => {
+            const current = prompt.current()
+            const textLength = current.reduce((len, p) => len + ("content" in p ? (p as { content: string }).content.length : 0), 0)
+            const content = `"${node.path}"`
+            prompt.set([...current, { type: "text", content, start: textLength, end: textLength + content.length }], textLength + content.length)
+          }}>
+            <ContextMenu.ItemLabel>{language.t("session.files.sendToChat")}</ContextMenu.ItemLabel>
+          </ContextMenu.Item>
+          <Show when={canOpenLocation() && fileTreeOpenLocationPath(node)}>
+            {(path) => (
+              <>
+                <ContextMenu.Separator />
+                <ContextMenu.Item onSelect={() => openLocation(path())}>
+                  <ContextMenu.ItemLabel>{language.t("session.files.openFolder")}</ContextMenu.ItemLabel>
+                </ContextMenu.Item>
+              </>
+            )}
+          </Show>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu>
   )
 
   createEffect(() => {
@@ -534,9 +547,9 @@ export default function FileTree(props: {
                     draggable={draggable()}
                     kinds={kinds()}
                     marks={marks()}
-                    as="button"
-                    type="button"
-                    onClick={() => props.onFileClick?.(node)}
+                    as="div"
+                    role="button"
+                    tabIndex={0}
                   >
                     <div class="w-4 shrink-0" />
                     <Switch>

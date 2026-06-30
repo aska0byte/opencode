@@ -26,9 +26,9 @@ const charsFromAssistantPart = (part: Part) => {
   if (part.type !== "tool") return { assistant: 0, tool: 0 }
 
   const input = Object.keys(part.state.input).length * 16
-  if (part.state.status === "pending") return { assistant: 0, tool: input + part.state.raw.length }
-  if (part.state.status === "completed") return { assistant: 0, tool: input + part.state.output.length }
-  if (part.state.status === "error") return { assistant: 0, tool: input + part.state.error.length }
+  if (part.state.status === "pending") return { assistant: 0, tool: input + (part.state.raw?.length ?? 0) }
+  if (part.state.status === "completed") return { assistant: 0, tool: input + (part.state.output?.length ?? 0) }
+  if (part.state.status === "error") return { assistant: 0, tool: input + (part.state.error?.length ?? 0) }
   return { assistant: 0, tool: input }
 }
 

@@ -1,8 +1,9 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createMemo } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, createSignal, on } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { ServerScope } from "@/utils/server-scope"
+import { fetchPreferences, pushPreference, PreferenceKeys } from "@/utils/server-api-storage"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -293,6 +294,142 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
     )
     const isLocal = createMemo(() => ServerConnection.local(current()))
+
+    // --- Server preference sync ---
+    {
+      const [initialSyncDone, setInitialSyncDone] = createSignal(false)
+
+      const activeUrl = () => {
+        const active = current()
+        if (active?.type === "http") return active.http.url
+        if (active?.type === "sidecar") return active.http.url
+        return location.origin
+      }
+
+      const activeCredentials = (): { username?: string; password?: string } | undefined => {
+        const active = current()
+        if (!active?.http?.password) return undefined
+        return { username: active.http.username, password: active.http.password }
+      }
+
+      const applyRemotePrefs = (remotePrefs: Record<string, string> | null) => {
+        if (!remotePrefs) return false
+        let changed = false
+
+        const remoteProjects = remotePrefs[PreferenceKeys.openedProjects]
+        if (remoteProjects) {
+          try {
+            const parsed = JSON.parse(remoteProjects) as Array<{ worktree: string; expanded: boolean }>
+            const scopeKey = scope()
+            setStore("projects", scopeKey, parsed)
+            changed = true
+          } catch {
+            // Invalid JSON, ignore
+          }
+        }
+
+        const remoteLastProject = remotePrefs[PreferenceKeys.lastProject]
+        if (remoteLastProject) {
+          const scopeKey = scope()
+          setStore("lastProject", scopeKey, remoteLastProject)
+          changed = true
+        }
+
+        return changed
+      }
+
+      // Sync on init: wait for local persistence, then fetch from server
+      // NOTE: No { defer: true } — on Web, ready() starts as true and never changes,
+      //       so defer would skip the initial (and only) run forever.
+      createEffect(
+        on(
+          ready,
+          (isReady) => {
+            if (!isReady) return
+            fetchPreferences(activeUrl(), activeCredentials())
+              .then((remotePrefs) => {
+                if (!remotePrefs) {
+                  setInitialSyncDone(true)
+                  return
+                }
+
+                // Track which keys the server actually has before applying
+                const hasServerProjects = PreferenceKeys.openedProjects in remotePrefs
+                const hasServerLastProject = PreferenceKeys.lastProject in remotePrefs
+
+                applyRemotePrefs(remotePrefs)
+
+                // Seed: if server has NO opened_projects key, push local state to server
+                if (!hasServerProjects) {
+                  const scopeKey = scope()
+                  const localProjects = store.projects[scopeKey]
+                  if (localProjects) {
+                    pushPreference(activeUrl(), PreferenceKeys.openedProjects, JSON.stringify(localProjects), activeCredentials())
+                  }
+                }
+
+                // Seed: if server has NO last_project key, push local state
+                if (!hasServerLastProject) {
+                  const scopeKey = scope()
+                  const localLast = store.lastProject[scopeKey]
+                  if (localLast) {
+                    pushPreference(activeUrl(), PreferenceKeys.lastProject, localLast, activeCredentials())
+                  }
+                }
+
+                setInitialSyncDone(true)
+              })
+              .catch(() => {
+                // Server may be offline — mark sync done so local changes can still push
+                setInitialSyncDone(true)
+              })
+          },
+        ),
+      )
+
+      // Sync on changes: only push AFTER initial server sync completes
+      createEffect(
+        on(
+          () => store.projects,
+          (projects) => {
+            if (!initialSyncDone()) return
+            const scopeKey = scope()
+            const projectList = projects[scopeKey]
+            // Push even if empty array — user may have closed all projects
+            if (projectList !== undefined) {
+              pushPreference(activeUrl(), PreferenceKeys.openedProjects, JSON.stringify(projectList), activeCredentials())
+            }
+          },
+          { defer: true },
+        ),
+      )
+
+      // Sync lastProject on changes
+      createEffect(
+        on(
+          () => store.lastProject,
+          (lastProject) => {
+            if (!initialSyncDone()) return
+            const scopeKey = scope()
+            const last = lastProject[scopeKey]
+            // Push even if empty string — user may have deselected
+            if (last !== undefined) {
+              pushPreference(activeUrl(), PreferenceKeys.lastProject, last, activeCredentials())
+            }
+          },
+          { defer: true },
+        ),
+      )
+
+      // Listen for preference.updated SSE events from other clients
+      // and re-fetch preferences to stay in sync
+      const onPreferenceRemoteUpdate = () => {
+        fetchPreferences(activeUrl(), activeCredentials())
+          .then(applyRemotePrefs)
+          .catch(() => { /* server may be offline */ })
+      }
+      window.addEventListener("opencode:preference-updated", onPreferenceRemoteUpdate)
+    }
 
     return {
       ready: isReady,

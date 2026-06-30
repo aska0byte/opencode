@@ -27,7 +27,7 @@ export const Commands = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCO
     Spec.make("serve", {
       description: "Start the v2 API server",
       params: {
-        hostname: Flag.string("hostname").pipe(Flag.withDefault("127.0.0.1")),
+        hostname: Flag.string("hostname").pipe(Flag.withDefault("0.0.0.0")),
         port: Flag.integer("port").pipe(Flag.optional),
         register: Flag.boolean("register").pipe(Flag.withDefault(false)),
       },

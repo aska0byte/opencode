@@ -75,6 +75,9 @@ export const make = <A, E = never>(
           Effect.gen(function* () {
             if (st._tag === "Running" && st.run.id === id) yield* idle
             yield* complete(done, exit)
+            if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+              yield* Effect.logWarning("fiber died", { runnerId: id })
+            }
           }),
           st._tag === "Running" && st.run.id === id ? ({ _tag: "Idle" } as const) : st,
         ] as const,

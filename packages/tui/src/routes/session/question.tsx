@@ -9,7 +9,8 @@ import { SplitBorder } from "../../ui/border"
 import { useTuiConfig } from "../../config"
 import { useBindings, useOpencodeModeStack } from "../../keymap"
 import { useToast } from "../../ui/toast"
-import { errorMessage } from "@/util/error"
+import { useSync } from "../../context/sync"
+import { errorMessage } from "../../util/error"
 
 const QUESTION_MODE = "question"
 

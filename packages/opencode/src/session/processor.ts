@@ -31,6 +31,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ToolOutput, Usage, type LLMEvent } from "@opencode-ai/llm"
+import { recordStep } from "@opencode-ai/usage-stats/service"
 
 const DOOM_LOOP_THRESHOLD = 3
 export type Result = "compact" | "stop" | "continue"
@@ -727,6 +728,16 @@ export const layer = Layer.effect(
               cost: usage.cost,
             })
             yield* session.updateMessage(ctx.assistantMessage)
+            yield* recordStep({
+              sessionID: ctx.sessionID,
+              providerID: ctx.model.providerID,
+              modelID: ctx.model.id,
+              tokensIn: usage.tokens.input + usage.tokens.cache.read + usage.tokens.cache.write,
+              tokensOut: usage.tokens.output,
+              tokensReasoning: usage.tokens.reasoning,
+              tokensCacheRead: usage.tokens.cache.read,
+              tokensCacheWrite: usage.tokens.cache.write,
+            }).pipe(Effect.tapError((e) => Effect.log("recordStep failed: " + String(e))), Effect.ignore, Effect.forkIn(scope))
             if (ctx.snapshot) {
               const patch = yield* snapshot.patch(ctx.snapshot)
               if (patch.files.length) {

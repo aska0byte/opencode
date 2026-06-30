@@ -173,6 +173,8 @@ declare global {
     api?: {
       setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
       exportDebugLogs?: () => Promise<string>
+      storeGet?: (name: string, key: string) => Promise<string | null>
+      storeSet?: (name: string, key: string, value: string) => Promise<void>
     }
   }
 }
@@ -272,9 +274,9 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
         <LanguageProvider locale={props.locale}>
           <UiI18nBridge>
             <ErrorBoundary
-              fallback={(error) => {
+              fallback={(error, reset) => {
                 Sentry.captureException(error)
-                return <ErrorPage error={error} />
+                return <ErrorPage error={error} onDismiss={reset} />
               }}
             >
               <QueryProvider>

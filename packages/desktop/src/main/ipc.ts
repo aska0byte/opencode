@@ -12,6 +12,7 @@ import { getStore } from "./store"
 import { getPinchZoomEnabled, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
+import { write as writeLog } from "./logging"
 
 const pickerFilters = (ext?: string[]) => {
   if (!ext || ext.length === 0) return undefined
@@ -43,7 +44,11 @@ export function registerIpcHandlers(deps: Deps) {
   const updaterSubscriptions = createUpdaterSubscriptions()
   app.once("will-quit", updaterSubscriptions.clear)
 
-  ipcMain.handle("kill-sidecar", () => deps.killSidecar())
+  ipcMain.handle("kill-sidecar", () => {
+    const stack = new Error().stack?.split("\n").slice(1, 8).join("\n")
+    writeLog("main", "kill-sidecar IPC received", { stack })
+    return deps.killSidecar()
+  })
   ipcMain.handle("await-initialization", () => deps.awaitInitialization())
   ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
@@ -206,6 +211,8 @@ export function registerIpcHandlers(deps: Deps) {
   })
 
   ipcMain.on("relaunch", () => {
+    const stack = new Error().stack?.split("\n").slice(1, 8).join("\n")
+    writeLog("main", "relaunch IPC received", { stack })
     deps.relaunch()
   })
 

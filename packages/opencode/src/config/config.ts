@@ -394,8 +394,10 @@ export const layer = Layer.effect(
           }
         }
 
-        const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
-        yield* merge(Global.Path.config, global, "global")
+        if (!Flag.OPENCODE_CONFIG) {
+          const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
+          yield* merge(Global.Path.config, global, "global")
+        }
 
         if (Flag.OPENCODE_CONFIG) {
           yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv))

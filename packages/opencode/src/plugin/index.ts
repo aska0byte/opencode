@@ -104,7 +104,7 @@ function withBunServeCompat<T>(enabled: boolean, callback: () => Promise<T>) {
           response.headers.forEach((value, key) => outgoing.setHeader(key, value))
           outgoing.end(Buffer.from(await response.arrayBuffer()))
         } catch (error) {
-          log.error("Bun.serve compatibility handler failed", { error })
+          console.error("Bun.serve compatibility handler failed", error)
           outgoing.statusCode = 500
           outgoing.end("Internal Server Error")
         }
@@ -219,6 +219,16 @@ async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, hooks:
   }
 }
 
+function errorStack(error: unknown) {
+  if (error instanceof Error) return error.stack
+}
+
+function printPluginError(input: { spec: string; stage: string; message: string; entry?: string; stack?: string }) {
+  console.error(`[opencode] Failed to load plugin ${input.spec} (${input.stage}): ${input.message}`)
+  if (input.entry) console.error(`[opencode] Plugin entry: ${input.entry}`)
+  if (input.stack) console.error(input.stack)
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -233,6 +243,32 @@ export const layer = Layer.effect(
 
         function publishPluginError(message: string) {
           bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
+        }
+
+        function reportPluginError(input: {
+          spec: string
+          stage: string
+          message: string
+          error: unknown
+          resolved?: PluginLoader.Resolved
+        }) {
+          printPluginError({
+            spec: input.spec,
+            stage: input.stage,
+            message: input.message,
+            entry: input.resolved?.entry,
+            stack: errorStack(input.error),
+          })
+          bridge.fork(
+            Effect.logError("failed to load external plugin", {
+              spec: input.spec,
+              stage: input.stage,
+              target: input.resolved?.target,
+              entry: input.resolved?.entry,
+              error: input.message,
+              stack: errorStack(input.error),
+            }),
+          )
         }
 
         const { Server } = yield* Effect.promise(() => import("../server/server"))
@@ -289,6 +325,7 @@ export const layer = Layer.effect(
                 const spec = candidate.plan.spec
                 const cause = error instanceof Error ? (error.cause ?? error) : error
                 const message = stage === "load" ? errorMessage(error) : errorMessage(cause)
+                reportPluginError({ spec, stage, message, error: cause, resolved })
 
                 if (stage === "install") {
                   const parsed = parsePluginSpecifier(spec)
@@ -320,6 +357,7 @@ export const layer = Layer.effect(
             try: async () => withBunServeCompat(await needsBunServeCompat(load), () => applyPlugin(load, input, hooks)),
             catch: (err) => {
               const message = errorMessage(err)
+              reportPluginError({ spec: load.spec, stage: "apply", message, error: err, resolved: load })
               return message
             },
           }).pipe(

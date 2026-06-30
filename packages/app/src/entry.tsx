@@ -121,7 +121,7 @@ const clearAuthToken = () => {
 
 const platform: Platform = {
   platform: "web",
-  version: pkg.version,
+  version: pkg.version + "_魔改版",
   openLink,
   back,
   forward,

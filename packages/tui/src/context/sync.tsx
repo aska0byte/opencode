@@ -202,7 +202,7 @@ export const {
     function dropPendingPermission(sessionID: string, requestID: string) {
       const requests = store.permission[sessionID]
       if (!requests) return
-      const match = Binary.search(requests, requestID, (r) => r.id)
+      const match = search(requests, requestID, (r) => r.id)
       if (!match.found) return
       setStore(
         "permission",
@@ -218,7 +218,7 @@ export const {
     function dropPendingQuestion(sessionID: string, requestID: string) {
       const requests = store.question[sessionID]
       if (!requests) return
-      const match = Binary.search(requests, requestID, (r) => r.id)
+      const match = search(requests, requestID, (r) => r.id)
       if (!match.found) return
       setStore(
         "question",

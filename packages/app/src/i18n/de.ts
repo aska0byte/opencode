@@ -416,6 +416,7 @@ export const dict = {
   "error.page.description": "Beim Laden der Anwendung ist ein Fehler aufgetreten.",
   "error.page.details.label": "Fehlerdetails",
   "error.page.action.restart": "Neustart",
+  "error.page.action.goBack": "Zurück",
   "error.page.action.report": "Fehler melden",
   "error.page.action.reported": "Fehler gemeldet",
   "error.page.action.checking": "Prüfen...",

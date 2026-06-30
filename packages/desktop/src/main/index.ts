@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
-import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { getCACertificates, setDefaultCACertificates } from "node:tls"
@@ -26,6 +25,8 @@ import {
   spawnLocalServer,
   type SidecarListener,
 } from "./server"
+import { getStore } from "./store"
+import { SERVER_PORT_KEY, SERVER_USERNAME_KEY, SERVER_PASSWORD_KEY } from "./store-keys"
 import { setupAutoUpdater, showUpdaterDialog } from "./updater"
 import {
   createMainWindow,
@@ -108,8 +109,6 @@ const main = Effect.gen(function* () {
     process.chdir(homedir())
   } catch {}
 
-  process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
-
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
   const onboardingTestRoot = ((): string | undefined => {
     if (!TEST_ONBOARDING) return
@@ -152,6 +151,11 @@ const main = Effect.gen(function* () {
     },
   )
   const stopSidecars = async () => {
+    const stack = new Error().stack
+      ?.split("\n")
+      .slice(1, 8)
+      .join("\n")
+    writeLog("utility", "stopSidecars called", { stack })
     await killSidecar()
     wslServers.stopAll()
   }
@@ -206,12 +210,22 @@ const main = Effect.gen(function* () {
     emitDeepLinks([url])
   })
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    const stack = new Error().stack?.split("\n").slice(1, 10).join("\n")
+    writeLog("main", "before-quit triggered", { stack })
     void stopSidecars()
   })
 
-  app.on("will-quit", () => {
+  app.on("will-quit", (event) => {
+    const stack = new Error().stack?.split("\n").slice(1, 10).join("\n")
+    writeLog("main", "will-quit triggered", { stack })
     void stopSidecars()
+  })
+
+  app.on("window-all-closed", () => {
+    const stack = new Error().stack?.split("\n").slice(1, 10).join("\n")
+    writeLog("main", "window-all-closed triggered", { stack })
+    app.quit()
   })
 
   app.on("child-process-gone", (_event, details) => {
@@ -280,42 +294,22 @@ const main = Effect.gen(function* () {
     ),
   )
 
-  const port = yield* Effect.gen(function* () {
-    const fromEnv = process.env.OPENCODE_PORT
-    if (fromEnv) {
-      const parsed = Number.parseInt(fromEnv, 10)
-      if (!Number.isNaN(parsed)) return parsed
-    }
-
-    const res = yield* Deferred.make<number, unknown>()
-    const server = createServer()
-    server.on("error", (e) => Deferred.failSync(res, () => e))
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      if (typeof address !== "object" || !address) {
-        server.close()
-        Deferred.failSync(res, () => new Error("Failed to get port"))
-        return
-      }
-      const port = address.port
-      server.close(() => Effect.runSync(Deferred.succeed(res, port)))
-    })
-
-    return yield* Deferred.await(res)
-  })
-  const hostname = "127.0.0.1"
-  const url = `http://${hostname}:${port}`
-  const password = randomUUID()
+  const store = getStore()
+  const port = Number(store.get(SERVER_PORT_KEY)) || Number(process.env.OPENCODE_PORT) || 4096
+  const hostname = "0.0.0.0"
+  const username = (store.get(SERVER_USERNAME_KEY) as string) || process.env.OPENCODE_SERVER_USERNAME || "opencode"
+  const password = (store.get(SERVER_PASSWORD_KEY) as string) || process.env.OPENCODE_SERVER_PASSWORD || "yiyisoftware"
+  const loopbackUrl = `http://127.0.0.1:${port}`
 
   const loadingTask = yield* Effect.gen(function* () {
-    logger.log("sidecar connection started", { url })
+    logger.log("sidecar connection started", { url: loopbackUrl })
 
     ensureLoopbackNoProxy()
     useEnvProxy()
 
-    logger.log("spawning sidecar", { url })
+    logger.log("spawning sidecar", { url: loopbackUrl })
     const { listener, health } = yield* Effect.promise(() =>
-      spawnLocalServer(hostname, port, password, {
+      spawnLocalServer(hostname, port, username, password, {
         userDataPath: app.getPath("userData"),
         onStdout: (message) => writeLog("server", "stdout", { message }),
         onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
@@ -324,8 +318,8 @@ const main = Effect.gen(function* () {
     )
     server = listener
     yield* Deferred.succeed(serverReady, {
-      url,
-      username: "opencode",
+      url: loopbackUrl,
+      username,
       password,
     })
 
@@ -349,6 +343,13 @@ const main = Effect.gen(function* () {
 
   mainWindow = createMainWindow()
   if (mainWindow) {
+    mainWindow.on("close", () => {
+      writeLog("main", "mainWindow close event fired")
+    })
+    mainWindow.on("closed", () => {
+      writeLog("main", "mainWindow closed event fired")
+      mainWindow = null
+    })
     createMenu({
       trigger: (id) => {
         const win = BrowserWindow.getFocusedWindow() ?? mainWindow

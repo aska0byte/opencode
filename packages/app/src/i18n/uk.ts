@@ -475,6 +475,7 @@ export const dict = {
   "error.page.description": "Під час завантаження програми сталася помилка.",
   "error.page.details.label": "Деталі помилки",
   "error.page.action.restart": "Перезапустити",
+  "error.page.action.goBack": "Назад",
   "error.page.action.report": "Повідомити про помилку",
   "error.page.action.reported": "Помилку повідомлено",
   "error.page.action.checking": "Перевірка...",

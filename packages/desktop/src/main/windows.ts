@@ -237,6 +237,7 @@ function wireWindowRecovery(win: BrowserWindow, name: string) {
   const sampler = createUnresponsiveSampler(win, name)
 
   const handle = async (button: string | undefined, wait: boolean) => {
+    writeLog("window", "dialog button clicked", { window: name, button, wait })
     if (button === "Export Logs") {
       const sampling = sampler.stopAndFlush()
       await exportDebugLogs().catch((error) => writeLog("main", "failed to export debug logs", { error }, "error"))

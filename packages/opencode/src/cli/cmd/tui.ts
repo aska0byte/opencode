@@ -216,8 +216,8 @@ export const TuiThreadCommand = cmd({
         process.argv.includes("--hostname") ||
         process.argv.includes("--mdns") ||
         network.mdns ||
-        network.port !== 0 ||
-        network.hostname !== "127.0.0.1"
+        network.port !== 4096 ||
+        network.hostname !== "127.0.0.1" && network.hostname !== "0.0.0.0"
 
       const transport = external
         ? {

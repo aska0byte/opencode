@@ -451,6 +451,7 @@ export const dict = {
   "error.page.description": "載入應用程式時發生錯誤。",
   "error.page.details.label": "錯誤詳情",
   "error.page.action.restart": "重新啟動",
+  "error.page.action.goBack": "返回",
   "error.page.action.report": "回報錯誤",
   "error.page.action.reported": "已回報錯誤",
   "error.page.action.checking": "檢查中...",
@@ -551,6 +552,7 @@ export const dict = {
   "session.header.open.menu": "開啟選項",
   "session.header.open.copyPath": "複製路徑",
   "session.files.openFolder": "開啟資料夾",
+  "session.files.sendToChat": "傳送至對話框",
 
   "status.popover.trigger": "狀態",
   "status.popover.ariaLabel": "伺服器設定",

@@ -73,6 +73,7 @@ export const make = (
         Effect.withFiber<Array<Record<string, unknown>>, SqlError>((fiber) => {
           const statement = db.prepare(sql)
           statement.setReadBigInts(Context.get(fiber.context, Client.SafeIntegers))
+          const t0 = Date.now()
           try {
             return Effect.succeed(statement.all(...(params as SQLInputValue[])) as Array<Record<string, unknown>>)
           } catch (cause) {
@@ -81,6 +82,11 @@ export const make = (
                 reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
               }),
             )
+          } finally {
+            const elapsed = Date.now() - t0
+            if (elapsed > 2000) {
+              console.error(`[sqlite-slow] ${elapsed}ms — ${sql.slice(0, 200)}`)
+            }
           }
         })
 

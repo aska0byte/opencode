@@ -386,6 +386,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         },
         setGlobalProject: setProjects,
       })
+      if ((event.type as string) === "preference.updated") {
+        // Notify server.tsx to re-fetch preferences from the server
+        window.dispatchEvent(new CustomEvent("opencode:preference-updated"))
+      }
       if (event.type === "server.connected" || event.type === "global.disposed") {
         if (recent) return
         for (const directory of Object.keys(children.children)) {

@@ -2,9 +2,12 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Effect, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import { ProxyUtil } from "../proxy-util"
 
-let embeddedUIPromise: Promise<Record<string, string> | null> | undefined
+let embeddedUIPromise: Promise<Record<string, string | Uint8Array> | null> | undefined
 
 export const UI_UPSTREAM = new URL("https://app.opencode.ai")
 
@@ -41,11 +44,23 @@ export function upstreamURL(path: string) {
   return new URL(path, UI_UPSTREAM).toString()
 }
 
+function loadJsonSidecar(jsonName: string): Record<string, Uint8Array> | null {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url))
+    const jsonPath = resolve(dir, jsonName)
+    const raw = readFileSync(jsonPath, "utf-8")
+    const data = JSON.parse(raw)
+    return Object.fromEntries(
+      Object.entries(data).map(([k, v]) => [k, Buffer.from(v as string, "base64")]),
+    )
+  } catch {
+    return null
+  }
+}
+
 export function embeddedUI(disableEmbeddedWebUi: boolean) {
   if (disableEmbeddedWebUi) return Promise.resolve(null)
-  return (embeddedUIPromise ??=
-    // @ts-expect-error - generated file at build time
-    import("opencode-web-ui.gen.ts").then((module) => module.default as Record<string, string>).catch(() => null))
+  return (embeddedUIPromise ??= Promise.resolve(loadJsonSidecar("opencode-web-ui.json")))
 }
 
 function notFound() {
@@ -64,13 +79,18 @@ function embeddedUIResponse(file: string, body: Uint8Array) {
 export function serveEmbeddedUIEffect(
   requestPath: string,
   fs: FSUtil.Interface,
-  embeddedWebUI: Record<string, string>,
+  embeddedWebUI: Record<string, string | Uint8Array>,
 ) {
-  const file = embeddedWebUI[requestPath.replace(/^\//, "")] ?? embeddedWebUI["index.html"] ?? null
-  if (!file) return Effect.succeed(notFound())
+  const value = embeddedWebUI[requestPath.replace(/^\//, "")] ?? embeddedWebUI["index.html"] ?? null
+  if (!value) return Effect.succeed(notFound())
 
-  return fs.readFile(file).pipe(
-    Effect.map((body) => embeddedUIResponse(file, body)),
+  // Uint8Array = embedded data (from JSON sidecar), string = file path (from build.ts)
+  if (value instanceof Uint8Array) {
+    return Effect.succeed(embeddedUIResponse(requestPath.replace(/^\//, "") || "index.html", value))
+  }
+
+  return fs.readFile(value).pipe(
+    Effect.map((body) => embeddedUIResponse(value, body)),
     Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(notFound())),
   )
 }
@@ -80,9 +100,12 @@ export function serveUIEffect(
   services: { fs: FSUtil.Interface; client: HttpClient.HttpClient; disableEmbeddedWebUi: boolean },
 ) {
   return Effect.gen(function* () {
-    const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     const path = new URL(request.url, "http://localhost").pathname
+    if (path === "/mobile" || path.startsWith("/mobile/")) {
+      return HttpServerResponse.empty({ status: 302, headers: { location: "/" } })
+    }
 
+    const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     if (embeddedWebUI) return yield* serveEmbeddedUIEffect(path, services.fs, embeddedWebUI)
 
     const response = yield* services.client.execute(

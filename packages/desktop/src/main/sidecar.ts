@@ -51,7 +51,7 @@ const parentPort = getParentPort()
 let listener: Listener | undefined
 let loopMonitor: ReturnType<typeof setInterval> | undefined
 
-process.on("exit", (code, signal) => {
+process.on("exit", (code: number, signal: NodeJS.Signals | undefined) => {
   diagLog(`EXIT code=${code} signal=${signal} listener=${!!listener}`)
 })
 process.on("uncaughtException", (err) => {
@@ -194,7 +194,7 @@ function serializeError(error: unknown) {
 }
 
 function getParentPort() {
-  const port = process.parentPort as ParentPort | undefined
+  const port = process.parentPort as unknown as ParentPort | undefined
   if (!port) throw new Error("Sidecar parent port unavailable")
   return port
 }

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { tmpdir } from "../../../fixture/fixture"
 import { json, mount, wait } from "./sync-fixture"
 import type { GlobalEvent, PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2"
+import { Global } from "@opencode-ai/core/global"
 
 function branchEvent(branch: string, workspace?: string): GlobalEvent {
   return {

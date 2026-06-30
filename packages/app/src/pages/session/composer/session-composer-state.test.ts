@@ -4,7 +4,9 @@ import { sessionPermissionRequest, sessionQuestionRequest } from "./session-requ
 
 mock.module("@solidjs/router", () => ({ useParams: () => ({ id: "root" }) }))
 
-const { isStalePermissionResponseFailure, removePermissionRequest, todoState } = await import("./session-composer-state")
+const { isStalePermissionResponseFailure, removePermissionRequest, todoDockAtBoundary, todoState } = await import(
+  "./session-composer-state"
+)
 
 const session = (input: { id: string; parentID?: string }) =>
   ({
@@ -237,5 +239,15 @@ describe("permission response stale cleanup", () => {
         permission("perm-1", "session-1"),
       ).map((item) => item.id),
     ).toEqual(["perm-2"])
+  })
+})
+
+describe("todoDockAtBoundary", () => {
+  test("shows active todos when entering a session", () => {
+    expect(todoDockAtBoundary("open")).toBe(true)
+  })
+
+  test("hides completed todos when entering a session", () => {
+    expect(todoDockAtBoundary("close")).toBe(false)
   })
 })

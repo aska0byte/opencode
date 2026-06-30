@@ -6,7 +6,7 @@ console.log("RuntimeFlags.Service:", rf.RuntimeFlags.Service)
 console.log("RuntimeFlags.Service.name:", rf.RuntimeFlags.Service.name)
 console.log("RuntimeFlags.Service.ServiceId:", (rf.RuntimeFlags.Service as any).ServiceId)
 console.log("RuntimeFlags.node:", rf.RuntimeFlags.node)
-console.log("RuntimeFlags.defaultLayer:", rf.RuntimeFlags.defaultLayer)
+console.log("RuntimeFlags.layer:", rf.RuntimeFlags.layer)
 
 // Now import via the server module path
 const server = await import("./src/server/routes/instance/httpapi/server")

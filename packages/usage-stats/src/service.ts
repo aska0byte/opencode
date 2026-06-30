@@ -142,7 +142,7 @@ export const layer = Layer.effect(
   }),
 )
 
-export const node = LayerNode.make(layer, [Database.node])
+export const node = LayerNode.make({ service: Service, layer, deps: [Database.node] })
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10)

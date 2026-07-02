@@ -511,7 +511,7 @@ describe("session HttpApi", () => {
             message.parts.some((part) => part.type === "text" && part.text.includes("manual summary")),
         ),
       ).toBe(true)
-    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(CrossSpawnSpawner.defaultLayer)),
+    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
 
   it.live("summarize processes an existing pending compaction marker", () =>
@@ -538,7 +538,7 @@ describe("session HttpApi", () => {
             message.parts.some((part) => part.type === "text" && part.text.includes("pending summary")),
         ),
       ).toBe(true)
-    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(CrossSpawnSpawner.defaultLayer)),
+    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
 
   it.live("manual summarize preempts an ordinary in-flight prompt run", () =>
@@ -577,7 +577,7 @@ describe("session HttpApi", () => {
             message.parts.some((part) => part.type === "text" && part.text.includes("summary after preempt")),
         ),
       ).toBe(true)
-    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(CrossSpawnSpawner.defaultLayer)),
+    }).pipe(Effect.provide(TestLLMServer.layer), Effect.provide(LayerNode.compile(CrossSpawnSpawner.node))),
   )
 
   it.instance(

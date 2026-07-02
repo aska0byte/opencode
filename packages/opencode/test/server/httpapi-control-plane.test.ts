@@ -44,7 +44,7 @@ const apiLayer = HttpRouter.serve(
       moveSession: (value) => Ref.set(called, value),
     }),
   ),
-  Layer.provide(ServerAuth.Config.layer({ password: "", username: "opencode" })),
+  Layer.provide(ServerAuth.Config.configLayer({ password: "", username: "opencode" })),
 )
 const it = testEffect(apiLayer)
 

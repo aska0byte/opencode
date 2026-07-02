@@ -38,7 +38,7 @@ const apiLayer = HttpRouter.serve(
       upgrade: () => Effect.void,
     }),
   ),
-  Layer.provide(ServerAuth.Config.layer({ password: "", username: "opencode" })),
+  Layer.provide(ServerAuth.Config.configLayer({ password: "", username: "opencode" })),
 )
 const it = testEffect(apiLayer)
 

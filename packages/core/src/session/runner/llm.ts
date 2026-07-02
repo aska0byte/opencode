@@ -91,7 +91,7 @@ import { llmClient } from "../../effect/app-node-platform"
 
 const LLM_STREAM_IDLE_TIMEOUT = Duration.seconds(180)
 
-export const layer = Layer.effect(
+const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const events = yield* EventV2.Service
@@ -408,8 +408,6 @@ export const layer = Layer.effect(
     })
   }),
 )
-
-export const defaultLayer = layer
 
 export const node = makeLocationNode({
   service: Service,

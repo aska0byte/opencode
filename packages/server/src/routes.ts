@@ -39,13 +39,13 @@ const applicationServices = LayerNode.group([
 export function createRoutes(password?: string) {
   return makeRoutes(
     password
-      ? ServerAuth.Config.layer({ username: "opencode", password })
+      ? ServerAuth.Config.configLayer({ username: "opencode", password })
       : ServerAuth.Config.defaultLayer,
   )
 }
 
 export function createEmbeddedRoutes() {
-  return makeRoutes(ServerAuth.Config.layer({ username: "opencode", password: "" }))
+  return makeRoutes(ServerAuth.Config.configLayer({ username: "opencode", password: "" }))
 }
 
 function makeRoutes<AuthError, AuthServices>(auth: Layer.Layer<ServerAuth.Config, AuthError, AuthServices>) {

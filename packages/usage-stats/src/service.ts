@@ -92,7 +92,7 @@ export const layer = Layer.effect(
 
     const queryByRange: Interface["queryByRange"] = (range) =>
       Effect.gen(function* () {
-        const start = new Date(Date.now() - range * 86_400_000).toISOString().slice(0, 10)
+        const start = new Date(Date.now() - range * 86_400_000).toLocaleDateString("en-CA")
         const end = todayStr()
         const rows = yield* db.all<Record<string, unknown>>(
           sql`SELECT du.project_id, du.model_id, p.worktree AS project_worktree,
@@ -113,7 +113,7 @@ export const layer = Layer.effect(
 
     const queryDailyByRange: Interface["queryDailyByRange"] = (range) =>
       Effect.gen(function* () {
-        const start = new Date(Date.now() - range * 86_400_000).toISOString().slice(0, 10)
+        const start = new Date(Date.now() - range * 86_400_000).toLocaleDateString("en-CA")
         const end = todayStr()
         const rows = yield* db.all<Record<string, unknown>>(
           sql`SELECT du.date,
@@ -133,7 +133,7 @@ export const layer = Layer.effect(
 
     const cleanup: Interface["cleanup"] = (keepDays) =>
       Effect.gen(function* () {
-        const cutoff = new Date(Date.now() - keepDays * 86_400_000).toISOString().slice(0, 10)
+        const cutoff = new Date(Date.now() - keepDays * 86_400_000).toLocaleDateString("en-CA")
         const result = yield* db.run(sql`DELETE FROM "daily_usage" WHERE "date" <= ${cutoff}`)
         return (result as { changes?: number }).changes ?? 0
       })
@@ -145,7 +145,7 @@ export const layer = Layer.effect(
 export const node = LayerNode.make({ service: Service, layer, deps: [Database.node] })
 
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10)
+  return new Date().toLocaleDateString("en-CA")
 }
 
 function mapRow(row: Record<string, unknown>): QueryResult {

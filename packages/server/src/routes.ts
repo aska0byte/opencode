@@ -38,9 +38,7 @@ const applicationServices = LayerNode.group([
 
 export function createRoutes(password?: string) {
   return makeRoutes(
-    password
-      ? ServerAuth.Config.configLayer({ username: "opencode", password })
-      : ServerAuth.Config.defaultLayer,
+    ServerAuth.Config.configLayer({ username: "opencode", password: password ?? "" }),
   )
 }
 

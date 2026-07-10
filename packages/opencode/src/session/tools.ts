@@ -23,6 +23,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { base64Size, SessionDiagnostics } from "@/diagnostics/session"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -103,30 +104,47 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         return run.promise(
           Effect.gen(function* () {
             const ctx = context(args, options)
-            yield* plugin.trigger(
-              "tool.execute.before",
-              { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
-              { args },
+            return yield* SessionDiagnostics.span(
+              "Tool.execute",
+              { tool: item.id, sessionID: ctx.sessionID, messageID: input.processor.message.id, callID: ctx.callID ?? null },
+              Effect.gen(function* () {
+                const details = SessionDiagnostics.toolDetails(
+                  item.id,
+                  ctx.sessionID,
+                  input.processor.message.id,
+                  ctx.callID ?? null,
+                  args,
+                )
+                SessionDiagnostics.markToolBefore(details)
+                yield* plugin.trigger(
+                  "tool.execute.before",
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
+                  { args },
+                )
+                SessionDiagnostics.markToolRun(details)
+                const result = yield* item.execute(args, ctx)
+                const output = {
+                  ...result,
+                  attachments: result.attachments?.map((attachment) => ({
+                    ...attachment,
+                    id: PartID.ascending(),
+                    sessionID: ctx.sessionID,
+                    messageID: input.processor.message.id,
+                  })),
+                }
+                SessionDiagnostics.markToolOutput(details, output)
+                SessionDiagnostics.markToolAfter(details)
+                yield* plugin.trigger(
+                  "tool.execute.after",
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args },
+                  output,
+                )
+                if (options.abortSignal?.aborted) {
+                  yield* input.processor.completeToolCall(options.toolCallId, output)
+                }
+                return output
+              }),
             )
-            const result = yield* item.execute(args, ctx)
-            const output = {
-              ...result,
-              attachments: result.attachments?.map((attachment) => ({
-                ...attachment,
-                id: PartID.ascending(),
-                sessionID: ctx.sessionID,
-                messageID: input.processor.message.id,
-              })),
-            }
-            yield* plugin.trigger(
-              "tool.execute.after",
-              { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args },
-              output,
-            )
-            if (options.abortSignal?.aborted) {
-              yield* input.processor.completeToolCall(options.toolCallId, output)
-            }
-            return output
           }),
         )
       },
@@ -399,24 +417,34 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       run.promise(
         Effect.gen(function* () {
           const ctx = context(args, opts)
+          const details = SessionDiagnostics.toolDetails(key, ctx.sessionID, input.processor.message.id, opts.toolCallId, args)
+          SessionDiagnostics.markMcpBefore(details)
           yield* plugin.trigger(
             "tool.execute.before",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
             { args },
           )
-          const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.gen(function* () {
-            yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
-            return yield* Effect.promise(() => execute(args, opts))
-          }).pipe(
-            Effect.withSpan("Tool.execute", {
-              attributes: {
-                "tool.name": key,
-                "tool.call_id": opts.toolCallId,
-                "session.id": ctx.sessionID,
-                "message.id": input.processor.message.id,
-              },
-            }),
+          const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* SessionDiagnostics.span(
+            "MCP.tool.execute",
+            details,
+            Effect.gen(function* () {
+              SessionDiagnostics.markMcpPermission(details)
+              yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
+              SessionDiagnostics.markMcpRun(details)
+              return yield* Effect.promise(() => execute(args, opts))
+            }).pipe(
+              Effect.withSpan("Tool.execute", {
+                attributes: {
+                  "tool.name": key,
+                  "tool.call_id": opts.toolCallId,
+                  "session.id": ctx.sessionID,
+                  "message.id": input.processor.message.id,
+                },
+              }),
+            ),
           )
+          SessionDiagnostics.markMcpResult(details, result)
+          SessionDiagnostics.markMcpAfter(details)
           yield* plugin.trigger(
             "tool.execute.after",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId, args },
@@ -480,6 +508,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             })),
             content: result.content,
           }
+          SessionDiagnostics.markMcpOutput(details, output)
           if (opts.abortSignal?.aborted) {
             yield* input.processor.completeToolCall(opts.toolCallId, output)
           }
@@ -573,12 +602,6 @@ function formatMcpResourceContent(server: string, uri: string, content: { conten
     attachments,
     text: text.join("\n\n") || `MCP resource ${uri} from ${server} returned no contents.`,
   }
-}
-
-function base64Size(value: string) {
-  const trimmed = value.replace(/\s/g, "")
-  const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0
-  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding)
 }
 
 function formatBytes(value: number) {

@@ -21,6 +21,7 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { SessionDiagnostics } from "@/diagnostics/session"
 
 export { Parameters } from "./shell/prompt"
 
@@ -446,6 +447,11 @@ export const ShellTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
+      const details = SessionDiagnostics.shellDetails(input, {
+        sessionID: ctx.sessionID,
+        messageID: ctx.messageID,
+        callID: ctx.callID,
+      })
 
       const closeSink = Effect.fnUntraced(function* () {
         const stream = sink
@@ -477,11 +483,16 @@ export const ShellTool = Tool.define(
           output: "",
         },
       })
+      SessionDiagnostics.markShellRunStart(details)
 
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(closeSink)
-          const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
+          SessionDiagnostics.markShellSpawnStart(details)
+          const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env)).pipe(
+            Effect.tapError((error) => Effect.sync(() => SessionDiagnostics.markShellSpawnError(details, error))),
+          )
+          SessionDiagnostics.markShellSpawned(details, String(handle.pid))
 
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
@@ -544,14 +555,27 @@ export const ShellTool = Tool.define(
             abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
             timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
           ])
+          SessionDiagnostics.markShellExit(details, exit.kind, exit.code)
 
           if (exit.kind === "abort") {
             aborted = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+            SessionDiagnostics.markShellKillStart(details, "abort")
+            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(
+              Effect.tap(() => Effect.sync(() => SessionDiagnostics.markShellKillEnd(details, "abort"))),
+              Effect.tapError((error) => Effect.sync(() => SessionDiagnostics.markShellKillError(details, "abort", error))),
+              Effect.orDie,
+            )
           }
           if (exit.kind === "timeout") {
             expired = true
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
+            SessionDiagnostics.markShellKillStart(details, "timeout")
+            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(
+              Effect.tap(() => Effect.sync(() => SessionDiagnostics.markShellKillEnd(details, "timeout"))),
+              Effect.tapError((error) =>
+                Effect.sync(() => SessionDiagnostics.markShellKillError(details, "timeout", error)),
+              ),
+              Effect.orDie,
+            )
           }
 
           return exit.kind === "exit" ? exit.code : null
@@ -582,6 +606,15 @@ export const ShellTool = Tool.define(
       if (meta.length > 0) {
         output += "\n\n<shell_metadata>\n" + meta.join("\n") + "\n</shell_metadata>"
       }
+      SessionDiagnostics.markShellRunEnd(details, {
+        exit: code,
+        aborted,
+        expired,
+        truncated: cut,
+        savedToFile: Boolean(file),
+        outputLength: output.length,
+        previewLength: last.length,
+      })
       return {
         title: input.command,
         metadata: {

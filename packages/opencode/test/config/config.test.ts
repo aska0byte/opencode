@@ -1354,6 +1354,32 @@ test("config parser preserves permission order while rejecting unknown top-level
   }
 })
 
+test("config parser accepts diagnostics sidecar settings", () => {
+  const config = ConfigParse.schema(
+    ConfigV1.Info,
+    {
+      diagnostics: {
+        enabled: true,
+        sidecar: {
+          dump: true,
+          probe: true,
+          slow_threshold_ms: 2500,
+          dump_min_interval_ms: 45000,
+          report_lag_threshold_ms: 12000,
+        },
+      },
+    },
+    "test",
+  )
+
+  expect(config.diagnostics?.enabled).toBe(true)
+  expect(config.diagnostics?.sidecar?.dump).toBe(true)
+  expect(config.diagnostics?.sidecar?.probe).toBe(true)
+  expect(config.diagnostics?.sidecar?.slow_threshold_ms).toBe(2500)
+  expect(config.diagnostics?.sidecar?.dump_min_interval_ms).toBe(45000)
+  expect(config.diagnostics?.sidecar?.report_lag_threshold_ms).toBe(12000)
+})
+
 // MCP config merging tests
 
 it.instance("project config can override MCP server enabled status", () =>

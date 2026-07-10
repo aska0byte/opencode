@@ -7,6 +7,7 @@ import { ConfigReference } from "../../config/reference"
 import { ConfigAgentV1 } from "./agent"
 import { ConfigAttachmentV1 } from "./attachment"
 import { ConfigCommandV1 } from "./command"
+import { ConfigDiagnosticsV1 } from "./diagnostics"
 import { ConfigFormatterV1 } from "./formatter"
 import { ConfigLayoutV1 } from "./layout"
 import { ConfigLSPV1 } from "./lsp"
@@ -142,6 +143,9 @@ export const Info = Schema.Struct({
   ).annotate({
     description:
       "Thresholds for truncating tool output. When output exceeds either limit, the full text is written to the truncation directory and a preview is returned.",
+  }),
+  diagnostics: Schema.optional(ConfigDiagnosticsV1.Info).annotate({
+    description: "Local diagnostics for troubleshooting performance issues.",
   }),
   compaction: Schema.optional(
     Schema.Struct({

@@ -57,7 +57,17 @@ export const rpc = {
     return { url: server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
+    console.log("[opencode:dcp-init-trace] tui.worker.checkUpgrade.start", {
+      pid: process.pid,
+      ppid: process.ppid,
+      directory: input.directory,
+    })
     await InstanceRuntime.load({ directory: input.directory })
+    console.log("[opencode:dcp-init-trace] tui.worker.checkUpgrade.loaded", {
+      pid: process.pid,
+      ppid: process.ppid,
+      directory: input.directory,
+    })
     await upgrade().catch(() => {})
   },
   async reload() {

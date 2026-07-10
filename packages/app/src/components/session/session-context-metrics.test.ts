@@ -59,22 +59,28 @@ describe("getSessionContext", () => {
 
     const ctx = getSessionContext(messages, providers)
 
+    // input(300) + output(100) + reasoning(50) + cache.read(25) + cache.write(25) = 500
+    // 500 / 1000 = 50%
     expect(ctx?.message.id).toBe("a2")
+    expect(ctx?.usedTokens).toBe(500)
     expect(ctx?.usage).toBe(50)
+    expect(ctx?.limit).toBe(1000)
     expect(ctx?.providerLabel).toBe("OpenAI")
     expect(ctx?.modelLabel).toBe("GPT-4.1")
   })
 
-  test("preserves fallback labels and null usage when model metadata is missing", () => {
+  test("falls back to 200000 limit when model metadata is missing", () => {
     const messages = [assistant("a1", { input: 40, output: 10, reasoning: 0, read: 0, write: 0 }, 0.1, "p-1", "m-1")]
     const providers = [{ id: "p-1", models: {} }]
 
     const ctx = getSessionContext(messages, providers)
 
+    // input(40) + output(10) = 50 tokens used; limit = 200000
     expect(ctx?.providerLabel).toBe("p-1")
     expect(ctx?.modelLabel).toBe("m-1")
-    expect(ctx?.limit).toBeUndefined()
-    expect(ctx?.usage).toBeNull()
+    expect(ctx?.limit).toBe(200000)
+    expect(ctx?.usedTokens).toBe(50)
+    expect(ctx?.usage).toBe(0)
   })
 
   test("recomputes when message array is mutated in place", () => {
@@ -95,7 +101,8 @@ describe("getSessionContext", () => {
     expect(ctx).toBeUndefined()
   })
 
-  test("computes stored session token totals", () => {
+  test("computes stored session token totals from inclusive usage totals", () => {
+    // input(10) + output(20) + reasoning(30) + cache.read(40) + cache.write(50) = 150
     expect(
       getSessionTokenTotal({
         input: 10,

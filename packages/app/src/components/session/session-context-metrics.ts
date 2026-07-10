@@ -1,5 +1,7 @@
 import type { AssistantMessage, Message, Session } from "@opencode-ai/sdk/v2/client"
 
+const DEFAULT_CONTEXT_LIMIT = 200000
+
 type Provider = {
   id: string
   name?: string
@@ -19,20 +21,25 @@ type Context = {
   model?: Model
   providerLabel: string
   modelLabel: string
-  limit: number | undefined
+  limit: number
   input: number
-  usage: number | null
+  usedTokens: number
+  usage: number
 }
 
-const tokenTotal = (msg: AssistantMessage) => {
-  return msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
-}
+/** Unified context-window occupancy: input + output + reasoning + cache.read + cache.write */
+const contextTokens = (msg: AssistantMessage) =>
+  (msg.tokens.input ?? 0) +
+  (msg.tokens.output ?? 0) +
+  (msg.tokens.reasoning ?? 0) +
+  (msg.tokens.cache?.read ?? 0) +
+  (msg.tokens.cache?.write ?? 0)
 
 const lastAssistantWithTokens = (messages: Message[]) => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
     if (msg.role !== "assistant") continue
-    if (tokenTotal(msg) <= 0) continue
+    if (contextTokens(msg) <= 0) continue
     return msg
   }
 }
@@ -43,8 +50,8 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
 
   const provider = providers.find((item) => item.id === message.providerID)
   const model = provider?.models[message.modelID]
-  const limit = model?.limit.context
-  const total = tokenTotal(message)
+  const limit = model?.limit.context ?? DEFAULT_CONTEXT_LIMIT
+  const usedTokens = contextTokens(message)
 
   return {
     message,
@@ -54,7 +61,8 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
     modelLabel: model?.name ?? message.modelID,
     limit,
     input: message.tokens.input,
-    usage: limit ? Math.round((total / limit) * 100) : null,
+    usedTokens,
+    usage: limit > 0 ? Math.round((usedTokens / limit) * 100) : 0,
   }
 }
 
@@ -64,5 +72,5 @@ export function getSessionContext(messages: Message[] = [], providers: Provider[
 
 export function getSessionTokenTotal(tokens: Session["tokens"] | undefined) {
   if (!tokens) return undefined
-  return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+  return tokens.input + tokens.output + tokens.reasoning + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0)
 }

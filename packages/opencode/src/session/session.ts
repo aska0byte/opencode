@@ -10,6 +10,7 @@ import type { ProviderMetadata, Usage } from "@opencode-ai/llm"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { SidecarDiagnostics } from "@/diagnostics/sidecar"
 import { SessionV2 } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
 import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
@@ -828,28 +829,34 @@ const layer: Layer.Layer<
     })
 
     const messages: Interface["messages"] = Effect.fn("Session.messages")(function* (input) {
-      if (input.limit) {
-        return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
-          Effect.provideService(Database.Service, database),
-        )).items
-      }
+      return yield* SidecarDiagnostics.span(
+        "Session.messages",
+        { sessionID: input.sessionID, limit: input.limit ?? null },
+        Effect.gen(function* () {
+          if (input.limit) {
+            return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
+              Effect.provideService(Database.Service, database),
+            )).items
+          }
 
-      const size = 50
-      const result = [] as SessionV1.WithParts[]
-      let before: string | undefined
-      while (true) {
-        const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
-        if (page.items.length === 0) break
-        for (let i = page.items.length - 1; i >= 0; i--) {
-          const item = page.items[i]
-          if (item) result.push(item)
-        }
-        if (!page.more || !page.cursor) break
-        before = page.cursor
-      }
-      return result.reverse()
+          const size = 50
+          const result = [] as SessionV1.WithParts[]
+          let before: string | undefined
+          while (true) {
+            const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
+              Effect.provideService(Database.Service, database),
+            )
+            if (page.items.length === 0) break
+            for (let i = page.items.length - 1; i >= 0; i--) {
+              const item = page.items[i]
+              if (item) result.push(item)
+            }
+            if (!page.more || !page.cursor) break
+            before = page.cursor
+          }
+          return result.reverse()
+        }),
+      )
     })
 
     const removeMessage = Effect.fn("Session.removeMessage")(function* (input: {

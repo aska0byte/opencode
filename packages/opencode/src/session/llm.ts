@@ -24,6 +24,7 @@ import { SessionID } from "@/session/schema"
 import { Auth } from "@/auth"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { SidecarDiagnostics } from "@/diagnostics/sidecar"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
@@ -93,25 +94,39 @@ const live: Layer.Layer<
         mode: input.agent.mode,
       })
 
-      const [language, cfg, item, info] = yield* Effect.all(
-        [
-          provider.getLanguage(input.model),
-          config.get(),
-          provider.getProvider(input.model.providerID),
-          auth.get(input.model.providerID),
-        ],
-        { concurrency: "unbounded" },
+      const details = {
+        sessionID: input.sessionID,
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        agent: input.agent.name,
+      }
+      const [language, cfg, item, info] = yield* SidecarDiagnostics.span(
+        "LLM.dependencies",
+        details,
+        Effect.all(
+          [
+            provider.getLanguage(input.model),
+            config.get(),
+            provider.getProvider(input.model.providerID),
+            auth.get(input.model.providerID),
+          ],
+          { concurrency: "unbounded" },
+        ),
       )
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
-      const prepared = yield* LLMRequestPrep.prepare({
-        ...input,
-        provider: item,
-        auth: info,
-        plugin,
-        flags,
-        isWorkflow,
-      })
+      const prepared = yield* SidecarDiagnostics.span(
+        "LLM.prepare",
+        details,
+        LLMRequestPrep.prepare({
+          ...input,
+          provider: item,
+          auth: info,
+          plugin,
+          flags,
+          isWorkflow,
+        }),
+      )
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
       // from the workflow service are executed via opencode's tool system
@@ -247,6 +262,7 @@ const live: Layer.Layer<
             "llm.provider": input.model.providerID,
             "llm.model": input.model.id,
           })
+          SidecarDiagnostics.mark("LLM.runtime", { ...details, runtime: "native" })
           return {
             type: "native" as const,
             stream: native.stream,
@@ -274,6 +290,7 @@ const live: Layer.Layer<
         "llm.provider": input.model.providerID,
         "llm.model": input.model.id,
       })
+      SidecarDiagnostics.mark("LLM.runtime", { ...details, runtime: "ai-sdk" })
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
       return {

@@ -16,6 +16,7 @@ import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
+import { SessionDiagnostics } from "@/diagnostics/session"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
@@ -553,6 +554,17 @@ const layer = Layer.effect(
       })
 
       const cleanup = Effect.fn("SessionProcessor.cleanup")(function* () {
+        SessionDiagnostics.markStreamCleanup(
+          SessionDiagnostics.streamDetails({
+            sessionID: ctx.sessionID,
+            messageID: ctx.assistantMessage.id,
+            providerID: ctx.model.providerID,
+            modelID: ctx.model.id,
+          }),
+          Object.keys(ctx.toolcalls).length,
+          Object.keys(ctx.reasoningMap).length,
+          ctx.currentText !== undefined,
+        )
         if (ctx.snapshot) {
           const patch = yield* snapshot.patch(ctx.snapshot)
           if (patch.files.length) {
@@ -654,16 +666,57 @@ const layer = Layer.effect(
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
             const stream = llm.stream(streamInput)
+            let eventCount = 0
+            const eventTypes: Record<string, number> = {}
+            const streamDetails = SessionDiagnostics.streamDetails({
+              sessionID: ctx.sessionID,
+              messageID: ctx.assistantMessage.id,
+              providerID: ctx.model.providerID,
+              modelID: ctx.model.id,
+            })
+            SessionDiagnostics.markStreamOpen(streamDetails)
 
-            yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsCompaction),
-              Stream.runDrain,
+            yield* SessionDiagnostics.span(
+              "SessionProcessor.stream",
+              streamDetails,
+              Effect.gen(function* () {
+                SessionDiagnostics.markStreamDrainStart(streamDetails)
+                yield* stream.pipe(
+                  Stream.tap((event) =>
+                    Effect.gen(function* () {
+                      eventCount += 1
+                      const eventType = SessionDiagnostics.eventType(event)
+                      eventTypes[eventType] = (eventTypes[eventType] ?? 0) + 1
+                      if (eventCount === 1 || eventCount % 50 === 0) {
+                        SessionDiagnostics.markStreamEvent(streamDetails, eventCount, event)
+                      }
+                      yield* handleEvent(event)
+                    }),
+                  ),
+                  Stream.takeUntil(() => ctx.needsCompaction),
+                  Stream.runDrain,
+                )
+                SessionDiagnostics.markStreamDrainEnd(
+                  streamDetails,
+                  eventCount,
+                  ctx.needsCompaction,
+                  Object.keys(eventTypes).length,
+                )
+              }),
             )
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
                 aborted = true
+                SessionDiagnostics.markStreamInterrupted(
+                  SessionDiagnostics.streamDetails({
+                    sessionID: ctx.sessionID,
+                    messageID: ctx.assistantMessage.id,
+                    providerID: ctx.model.providerID,
+                    modelID: ctx.model.id,
+                  }),
+                  "interrupt",
+                )
                 if (!ctx.assistantMessage.error) {
                   yield* halt(new DOMException("Aborted", "AbortError"))
                 }

@@ -278,39 +278,44 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
+  let submitting = false
+
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
 
-    const target = prompt.capture()
-    const submission = createPromptSubmissionState({
-      target,
-      prompt: target.current(),
-      context: target.context.items().slice(),
-    })
-    const currentPrompt = submission.prompt
-    const context = submission.context
-    const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
-    const images = input.imageAttachments().slice()
-    const mode = input.mode()
-
-    if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
-      if (input.working()) void abort()
-      return
-    }
-
-    const currentModel = local.model.current()
-    const currentAgent = local.agent.current()
-    const variant = local.model.variant.current()
-    if (!currentModel || !currentAgent) {
-      showToast({
-        title: language.t("prompt.toast.modelAgentRequired.title"),
-        description: language.t("prompt.toast.modelAgentRequired.description"),
+    if (submitting) return
+    submitting = true
+    try {
+      const target = prompt.capture()
+      const submission = createPromptSubmissionState({
+        target,
+        prompt: target.current(),
+        context: target.context.items().slice(),
       })
-      return
-    }
+      const currentPrompt = submission.prompt
+      const context = submission.context
+      const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
+      const images = input.imageAttachments().slice()
+      const mode = input.mode()
 
-    input.addToHistory(currentPrompt, mode)
-    input.resetHistoryNavigation()
+      if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
+        if (input.working()) void abort()
+        return
+      }
+
+      const currentModel = local.model.current()
+      const currentAgent = local.agent.current()
+      const variant = local.model.variant.current()
+      if (!currentModel || !currentAgent) {
+        showToast({
+          title: language.t("prompt.toast.modelAgentRequired.title"),
+          description: language.t("prompt.toast.modelAgentRequired.description"),
+        })
+        return
+      }
+
+      input.addToHistory(currentPrompt, mode)
+      input.resetHistoryNavigation()
 
     const projectDirectory = sdk().directory
     const isNewSession = !params.id
@@ -582,6 +587,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       removeOptimisticMessage()
       if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
     })
+    } finally {
+      submitting = false
+    }
   }
 
   return {

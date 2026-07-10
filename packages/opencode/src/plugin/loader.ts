@@ -13,6 +13,16 @@ import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 
 export namespace PluginLoader {
+  type TraceData = Record<string, string | number | boolean | undefined>
+
+  function trace(message: string, data: TraceData) {
+    console.log(`[opencode:dcp-init-trace] PluginLoader.${message}`, {
+      pid: process.pid,
+      ppid: process.ppid,
+      ...data,
+    })
+  }
+
   // A normalized plugin declaration derived from config before any filesystem or npm work happens.
   export type Plan = {
     spec: string
@@ -160,6 +170,7 @@ export namespace PluginLoader {
     // Deprecated plugin packages are silently ignored because they are now built in.
     if (plan.deprecated) return { retry: false }
 
+    trace("attempt.start", { kind, spec: plan.spec, retry })
     report?.start?.(candidate, retry)
 
     const resolved = await resolve(plan, kind)
@@ -171,18 +182,30 @@ export namespace PluginLoader {
           const value = await missing(resolved.value, candidate.origin, retry)
           if (value !== undefined) return { value, retry: false }
         }
+        trace("attempt.missing", { kind, spec: plan.spec, retry, target: resolved.value.target })
         report?.missing?.(candidate, retry, resolved.value.message, resolved.value)
         return { retry: false }
       }
+      trace("attempt.error", { kind, spec: plan.spec, retry, stage: resolved.stage })
       report?.error?.(candidate, retry, resolved.stage, resolved.error)
       return { retry: filePlugin && isRetryableResolveError(resolved.stage, resolved.error) }
     }
 
+    trace("attempt.resolved", {
+      kind,
+      spec: plan.spec,
+      retry,
+      source: resolved.value.source,
+      target: resolved.value.target,
+      entry: resolved.value.entry,
+    })
     const loaded = await load(resolved.value)
     if (!loaded.ok) {
+      trace("attempt.loadError", { kind, spec: plan.spec, retry, entry: resolved.value.entry })
       report?.error?.(candidate, retry, "load", loaded.error, resolved.value)
       return { retry: false }
     }
+    trace("attempt.loaded", { kind, spec: plan.spec, retry, entry: resolved.value.entry })
 
     // The default behavior is to return the successfully loaded plugin as-is, but callers can
     // provide a finisher to adapt the result into a more specific runtime shape.
@@ -207,6 +230,7 @@ export namespace PluginLoader {
   // treated as permanent for this process because Bun caches failed module resolution.
   export async function loadExternal<R = Loaded>(input: Input<R>): Promise<R[]> {
     const candidates = input.items.map((origin) => ({ origin, plan: plan(origin.spec) }))
+    trace("loadExternal.start", { kind: input.kind, candidates: candidates.length })
     const list: Array<Promise<AttemptResult<R>>> = []
     for (const candidate of candidates) {
       list.push(attempt(candidate, input.kind, false, input.finish, input.missing, input.report))
@@ -232,6 +256,7 @@ export namespace PluginLoader {
     // Drop skipped/failed entries while preserving the successful result order.
     const ready: R[] = []
     for (const item of out) if (item.value !== undefined) ready.push(item.value)
+    trace("loadExternal.done", { kind: input.kind, candidates: candidates.length, ready: ready.length })
     return ready
   }
 }

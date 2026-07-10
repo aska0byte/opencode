@@ -56,6 +56,16 @@ type BunServeCompat = {
   which?: (command: string) => string | null
 }
 
+type TraceData = Record<string, string | number | boolean | undefined>
+
+function tracePluginLifecycle(message: string, data: TraceData) {
+  console.log(`[opencode:dcp-init-trace] ${message}`, {
+    pid: process.pid,
+    ppid: process.ppid,
+    ...data,
+  })
+}
+
 function which(command: string) {
   const result = spawnSync(
     process.platform === "win32" ? "where.exe" : "command",
@@ -310,6 +320,14 @@ export const layer = Layer.effect(
         }
 
         const plugins = flags.pure ? [] : (cfg.plugin_origins ?? [])
+        tracePluginLifecycle("Plugin.state.externalPlugins", {
+          directory: ctx.directory,
+          worktree: ctx.worktree,
+          projectID: ctx.project.id,
+          serverUrl: input.serverUrl.toString(),
+          pure: flags.pure,
+          pluginOrigins: plugins.length,
+        })
         if (flags.pure && cfg.plugin_origins?.length) {
         }
         if (plugins.length) yield* config.waitForDependencies()
@@ -319,8 +337,21 @@ export const layer = Layer.effect(
             items: plugins,
             kind: "server",
             report: {
-              start(candidate) {},
-              missing(candidate, _retry, message) {},
+              start(candidate, retry) {
+                tracePluginLifecycle("PluginLoader.server.start", {
+                  directory: ctx.directory,
+                  spec: candidate.plan.spec,
+                  retry,
+                })
+              },
+              missing(candidate, retry, message) {
+                tracePluginLifecycle("PluginLoader.server.missing", {
+                  directory: ctx.directory,
+                  spec: candidate.plan.spec,
+                  retry,
+                  message,
+                })
+              },
               error(candidate, _retry, stage, error, resolved) {
                 const spec = candidate.plan.spec
                 const cause = error instanceof Error ? (error.cause ?? error) : error
@@ -348,8 +379,21 @@ export const layer = Layer.effect(
             },
           }),
         )
+        tracePluginLifecycle("Plugin.state.externalPlugins.loaded", {
+          directory: ctx.directory,
+          projectID: ctx.project.id,
+          loaded: loaded.length,
+        })
         for (const load of loaded) {
           if (!load) continue
+          tracePluginLifecycle("Plugin.apply.start", {
+            directory: ctx.directory,
+            projectID: ctx.project.id,
+            spec: load.spec,
+            source: load.source,
+            target: load.target,
+            entry: load.entry,
+          })
 
           // Keep plugin execution sequential so hook registration and execution
           // order remains deterministic across plugin runs.

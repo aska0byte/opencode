@@ -7,6 +7,7 @@ import { makeGlobalNode, Node } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { getCurrentContextTokens, DEFAULT_CONTEXT_LIMIT } from "@opencode-ai/core/session/context-usage"
 import { Provider } from "@/provider/provider"
 import { Context, Effect, Layer, SynchronizedRef } from "effect"
 
@@ -199,7 +200,6 @@ const layer = Layer.effect(
         providerID: ProviderV2.ID.make(message.providerID),
         modelID: ModelV2.ID.make(message.modelID),
       })
-      if (!size) return
 
       yield* Effect.promise(() =>
         input.connection
@@ -207,8 +207,8 @@ const layer = Layer.effect(
             sessionId: input.sessionID,
             update: {
               sessionUpdate: "usage_update",
-              used: message.tokens.input + message.tokens.cache.read,
-              size,
+              used: getCurrentContextTokens(message.tokens),
+              size: size ?? DEFAULT_CONTEXT_LIMIT,
               cost: { amount: totalSessionCost(messages), currency: "USD" },
             },
           })

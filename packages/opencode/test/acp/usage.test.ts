@@ -222,7 +222,7 @@ describe("acp usage", () => {
           sessionId: "ses_1",
           update: {
             sessionUpdate: "usage_update",
-            used: 15,
+            used: 35, // input(10) + output(20) + reasoning(0) + cache.read(5) + cache.write(0)
             size: 128_000,
             cost: { amount: 3, currency: "USD" },
           },
@@ -296,7 +296,7 @@ describe("acp usage", () => {
     )
   })
 
-  it.effect("skips usage update when context size is unknown", () => {
+  it.effect("sends usage_update with fallback limit when context size is unknown", () => {
     const updates: SessionNotification[] = []
     return Effect.gen(function* () {
       const usage = yield* UsageService.Service
@@ -306,7 +306,17 @@ describe("acp usage", () => {
         directory: "/workspace",
       })
 
-      expect(updates).toEqual([])
+      expect(updates).toEqual([
+        {
+          sessionId: "ses_1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 30, // input(10) + output(20) + reasoning(0) + cache.read(0) + cache.write(0)
+            size: 200000, // DEFAULT_CONTEXT_LIMIT fallback
+            cost: { amount: 1, currency: "USD" },
+          },
+        },
+      ])
     }).pipe(
       Effect.provide(
         fakeLayer({

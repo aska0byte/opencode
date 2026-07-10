@@ -1,13 +1,18 @@
 import { appendFileSync } from "node:fs"
 import * as http from "node:http"
 import * as tls from "node:tls"
+import { loadSidecarDiagnosticsConfig } from "./sidecar-diagnostics-config"
+import { SidecarDump } from "./sidecar-dump"
+import { SidecarPerfProbe } from "./sidecar-perf-probe"
 
 const DIAG_LOG = `${process.env.XDG_STATE_HOME ?? "."}/sidecar-diagnostics.log`
 function diagLog(msg: string) {
   const line = `[${new Date().toISOString()}] ${msg}\n`
   try {
     appendFileSync(DIAG_LOG, line)
-  } catch {}
+  } catch (error) {
+    process.stderr.write(`[sidecar-diag] failed to write diagnostics log: ${serializeError(error).message}\n`)
+  }
   process.stderr.write(`[sidecar-diag] ${msg}\n`)
 }
 
@@ -50,6 +55,8 @@ type Listener = {
 const parentPort = getParentPort()
 let listener: Listener | undefined
 let loopMonitor: ReturnType<typeof setInterval> | undefined
+let sidecarProbe: SidecarPerfProbe | undefined
+let clearServerDiagnostics: (() => void) | undefined
 
 process.on("exit", (code: number, signal: NodeJS.Signals | undefined) => {
   diagLog(`EXIT code=${code} signal=${signal} listener=${!!listener}`)
@@ -75,20 +82,43 @@ parentPort.on("message", (event) => {
 })
 
 async function start(command: StartCommand) {
+  prepareSidecarEnv(command.username, command.password, command.userDataPath)
+  const diagnostics = loadSidecarDiagnosticsConfig({ log: diagLog })
+  const probe = diagnostics.probe
+    ? new SidecarPerfProbe({ log: diagLog, slowThresholdMs: diagnostics.slowThresholdMs })
+    : undefined
+  sidecarProbe = probe
   try {
-    prepareSidecarEnv(command.username, command.password, command.userDataPath)
+    probe?.mark("sidecar.start", { hostname: command.hostname, port: command.port })
     ensureLoopbackNoProxy()
     useSystemCertificates()
     useEnvProxy()
-    const { Server } = await import("virtual:opencode-server")
+    probe?.mark("sidecar.env.ready")
+    const serverModule = probe
+      ? await probe.measure("server.import", {}, () => import("virtual:opencode-server"))
+      : await import("virtual:opencode-server")
+    serverModule.SidecarDiagnostics.install(probe)
+    clearServerDiagnostics = serverModule.SidecarDiagnostics.clear
+    const sidecarDump = diagnostics.dump
+      ? new SidecarDump({
+          stateHome: process.env.XDG_STATE_HOME ?? command.userDataPath,
+          log: diagLog,
+          minIntervalMs: diagnostics.dumpMinIntervalMs,
+          reportLagThresholdMs: diagnostics.reportLagThresholdMs,
+        })
+      : undefined
 
-    listener = await Server.listen({
-      port: command.port,
-      hostname: command.hostname,
-      username: command.username,
-      password: command.password,
-      cors: ["oc://renderer"],
-    })
+    const listen = () =>
+      serverModule.Server.listen({
+        port: command.port,
+        hostname: command.hostname,
+        username: command.username,
+        password: command.password,
+        cors: ["oc://renderer"],
+      })
+    listener = probe
+      ? await probe.measure("server.listen", { hostname: command.hostname, port: command.port }, listen)
+      : await listen()
 
     let lastLoopCheck = Date.now()
     loopMonitor = setInterval(() => {
@@ -96,18 +126,25 @@ async function start(command: StartCommand) {
       const lag = now - lastLoopCheck - 5000
       if (lag > 2000) {
         diagLog(`EVENT LOOP LAG ${lag}ms — server may be unresponsive`)
+        sidecarDump?.captureLag({ lag, listenerActive: Boolean(listener), probe: probe?.snapshot() })
       }
       lastLoopCheck = now
     }, 5000)
 
     parentPort.postMessage({ type: "ready" })
+    probe?.mark("sidecar.ready")
   } catch (error) {
-    parentPort.postMessage({ type: "error", error: serializeError(error) })
+    const serialized = serializeError(error)
+    probe?.mark("sidecar.error", { error: serialized.message })
+    parentPort.postMessage({ type: "error", error: serialized })
     setImmediate(() => process.exit(1))
   }
 }
 
 async function stop() {
+  sidecarProbe?.mark("sidecar.stop", { listenerActive: Boolean(listener) })
+  clearServerDiagnostics?.()
+  clearServerDiagnostics = undefined
   if (loopMonitor) {
     clearInterval(loopMonitor)
     loopMonitor = undefined
@@ -116,6 +153,7 @@ async function stop() {
     await listener?.stop()
   } finally {
     listener = undefined
+    sidecarProbe = undefined
     parentPort.postMessage({ type: "stopped" })
     setImmediate(() => process.exit(0))
   }

@@ -1,10 +1,18 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createEffect, createMemo, createSignal, on } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { pathKey } from "@/utils/path-key"
 import { ServerScope } from "@/utils/server-scope"
-import { fetchPreferences, pushPreference, PreferenceKeys } from "@/utils/server-api-storage"
+import {
+  createLatestPreferencePusher,
+  fetchPreferences,
+  mergeOpenedProjects,
+  normalizeOpenedProjects,
+  openedProjectsEqual,
+  PreferenceKeys,
+  type OpenedProjectPref,
+} from "@/utils/server-api-storage"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -336,6 +344,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     // --- Server preference sync ---
     {
       const [initialSyncDone, setInitialSyncDone] = createSignal(false)
+      // Latest-wins coalesced PUTs: rapid multi-open must not let an older short list
+      // finish after a newer full list and overwrite server preference.
+      const preferencePusher = createLatestPreferencePusher()
+      let remoteRefreshQueued = false
 
       const activeUrl = () => {
         const active = current()
@@ -350,17 +362,31 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         return { username: active.http.username, password: active.http.password }
       }
 
-      const applyRemotePrefs = (remotePrefs: Record<string, string> | null) => {
+      const applyRemotePrefs = (remotePrefs: Record<string, string> | null, mode: "merge" | "replace" = "merge") => {
         if (!remotePrefs) return false
+        // Local writes in flight own the truth until they settle; applying a stale
+        // remote snapshot mid-push is the "projects disappear while opening many" path.
+        if (preferencePusher.isBusy()) return false
         let changed = false
+        const scopeKey = scope()
 
         const remoteProjects = remotePrefs[PreferenceKeys.openedProjects]
         if (remoteProjects) {
           try {
-            const parsed = JSON.parse(remoteProjects) as Array<{ worktree: string; expanded: boolean }>
-            const scopeKey = scope()
-            setStore("projects", scopeKey, parsed)
-            changed = true
+            const parsed = JSON.parse(remoteProjects) as OpenedProjectPref[]
+            if (Array.isArray(parsed)) {
+              const current = store.projects[scopeKey]
+              const next =
+                mode === "replace"
+                  ? normalizeOpenedProjects(parsed)
+                  : mergeOpenedProjects(current, parsed, pathKey)
+              // Equal snapshots (including PUT self-echo) must not replace store identity:
+              // thrashing projects[] remounts the sidebar rail and drops prompt selection.
+              if (!openedProjectsEqual(current, next)) {
+                setStore("projects", scopeKey, next)
+                changed = true
+              }
+            }
           } catch {
             // Invalid JSON, ignore
           }
@@ -368,12 +394,25 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
         const remoteLastProject = remotePrefs[PreferenceKeys.lastProject]
         if (remoteLastProject) {
-          const scopeKey = scope()
-          setStore("lastProject", scopeKey, remoteLastProject)
-          changed = true
+          // Keep a non-empty local selection on restart; only fill when local is empty.
+          const localLast = store.lastProject[scopeKey]
+          if ((mode === "replace" || !localLast) && localLast !== remoteLastProject) {
+            setStore("lastProject", scopeKey, remoteLastProject)
+            changed = true
+          }
         }
 
         return changed
+      }
+
+      const refreshRemotePrefs = () => {
+        // Live SSE refresh: replace so another client's intentional close/open wins.
+        // Startup still uses merge (see init effect) to protect local-only opens.
+        fetchPreferences(activeUrl(), activeCredentials())
+          .then((remotePrefs) => applyRemotePrefs(remotePrefs, "replace"))
+          .catch(() => {
+            /* server may be offline */
+          })
       }
 
       // Sync on init: wait for local persistence, then fetch from server
@@ -391,28 +430,26 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
                   return
                 }
 
-                // Track which keys the server actually has before applying
-                const hasServerProjects = PreferenceKeys.openedProjects in remotePrefs
-                const hasServerLastProject = PreferenceKeys.lastProject in remotePrefs
+                // Merge (not replace): a stale shorter remote snapshot must not erase
+                // local-only opens that survived in opencode.global.dat across restarts.
+                applyRemotePrefs(remotePrefs, "merge")
 
-                applyRemotePrefs(remotePrefs)
-
-                // Seed: if server has NO opened_projects key, push local state to server
-                if (!hasServerProjects) {
-                  const scopeKey = scope()
-                  const localProjects = store.projects[scopeKey]
-                  if (localProjects) {
-                    pushPreference(activeUrl(), PreferenceKeys.openedProjects, JSON.stringify(localProjects), activeCredentials())
-                  }
+                // Always push the post-merge local truth so the server catches up.
+                // Previously we only seeded when the key was missing; after a race
+                // wrote a short list, the key existed forever and local never re-seeded.
+                const scopeKey = scope()
+                const localProjects = store.projects[scopeKey]
+                if (localProjects !== undefined) {
+                  preferencePusher.push(
+                    activeUrl(),
+                    PreferenceKeys.openedProjects,
+                    JSON.stringify(localProjects),
+                    activeCredentials(),
+                  )
                 }
-
-                // Seed: if server has NO last_project key, push local state
-                if (!hasServerLastProject) {
-                  const scopeKey = scope()
-                  const localLast = store.lastProject[scopeKey]
-                  if (localLast) {
-                    pushPreference(activeUrl(), PreferenceKeys.lastProject, localLast, activeCredentials())
-                  }
+                const localLast = store.lastProject[scopeKey]
+                if (localLast !== undefined) {
+                  preferencePusher.push(activeUrl(), PreferenceKeys.lastProject, localLast, activeCredentials())
                 }
 
                 setInitialSyncDone(true)
@@ -425,34 +462,35 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         ),
       )
 
-      // Sync on changes: only push AFTER initial server sync completes
+      // Sync on changes: only push AFTER initial server sync completes.
+      // Track the serialized list for the active scope — reading `store.projects`
+      // alone can miss nested setStore updates under projects[scope].
       createEffect(
         on(
-          () => store.projects,
-          (projects) => {
+          () => {
+            const list = store.projects[scope()]
+            return list === undefined ? undefined : JSON.stringify(list)
+          },
+          (serialized) => {
             if (!initialSyncDone()) return
-            const scopeKey = scope()
-            const projectList = projects[scopeKey]
             // Push even if empty array — user may have closed all projects
-            if (projectList !== undefined) {
-              pushPreference(activeUrl(), PreferenceKeys.openedProjects, JSON.stringify(projectList), activeCredentials())
+            if (serialized !== undefined) {
+              preferencePusher.push(activeUrl(), PreferenceKeys.openedProjects, serialized, activeCredentials())
             }
           },
           { defer: true },
         ),
       )
 
-      // Sync lastProject on changes
+      // Sync lastProject on changes (scope-keyed read so nested updates re-run)
       createEffect(
         on(
-          () => store.lastProject,
-          (lastProject) => {
+          () => store.lastProject[scope()],
+          (last) => {
             if (!initialSyncDone()) return
-            const scopeKey = scope()
-            const last = lastProject[scopeKey]
             // Push even if empty string — user may have deselected
             if (last !== undefined) {
-              pushPreference(activeUrl(), PreferenceKeys.lastProject, last, activeCredentials())
+              preferencePusher.push(activeUrl(), PreferenceKeys.lastProject, last, activeCredentials())
             }
           },
           { defer: true },
@@ -460,13 +498,24 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       )
 
       // Listen for preference.updated SSE events from other clients
-      // and re-fetch preferences to stay in sync
+      // and re-fetch preferences to stay in sync. Skip while local PUTs are
+      // coalescing so a self-echo of an intermediate snapshot cannot roll back.
       const onPreferenceRemoteUpdate = () => {
-        fetchPreferences(activeUrl(), activeCredentials())
-          .then(applyRemotePrefs)
-          .catch(() => { /* server may be offline */ })
+        if (preferencePusher.isBusy()) {
+          remoteRefreshQueued = true
+          void preferencePusher.whenIdle().then(() => {
+            if (!remoteRefreshQueued) return
+            remoteRefreshQueued = false
+            refreshRemotePrefs()
+          })
+          return
+        }
+        refreshRemotePrefs()
       }
       window.addEventListener("opencode:preference-updated", onPreferenceRemoteUpdate)
+      onCleanup(() => {
+        window.removeEventListener("opencode:preference-updated", onPreferenceRemoteUpdate)
+      })
     }
 
     return {

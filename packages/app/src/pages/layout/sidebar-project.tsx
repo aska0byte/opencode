@@ -196,6 +196,7 @@ const ProjectPreviewPanel = (props: {
   workspaceSessions: (directory: string) => ReturnType<typeof sortedRootSessions>
   ctx: ProjectSidebarContext
   language: ReturnType<typeof useLanguage>
+  closePreview: () => void
 }): JSX.Element => (
   <div class="-m-3 p-2 flex flex-col w-72">
     <div class="px-4 pt-2 pb-1 flex items-center gap-2">
@@ -257,7 +258,7 @@ const ProjectPreviewPanel = (props: {
         class="flex w-full text-left justify-start text-text-base px-2 hover:bg-transparent active:bg-transparent"
         onClick={() => {
           props.ctx.openSidebar()
-          props.ctx.onHoverOpenChanged(props.project.worktree, false)
+          props.closePreview()
           if (props.selected()) return
           props.ctx.navigateToProject(props.project.worktree)
         }}
@@ -283,15 +284,16 @@ export const SortableProject = (props: {
   const dirs = createMemo(() => props.ctx.workspaceIds(props.project))
   const [state, setState] = createStore({
     menu: false,
+    previewOpen: false,
     suppressHover: false,
   })
 
   const isHoverProject = () => props.ctx.hoverProject() === props.project.worktree
   const preview = createMemo(() => !props.mobile && props.ctx.sidebarOpened())
   const overlay = createMemo(() => !props.mobile && !props.ctx.sidebarOpened())
-  const active = createMemo(() => state.menu || (preview() ? isHoverProject() : overlay() && isHoverProject()))
+  const active = createMemo(() => state.menu || (preview() ? state.previewOpen : overlay() && isHoverProject()))
 
-  const hoverOpen = () => isHoverProject() && preview() && !selected() && !state.menu
+  const hoverOpen = () => state.previewOpen && preview() && !selected() && !state.menu
 
   const label = (directory: string) => {
     const [data] = serverSync().child(directory, { bootstrap: false })
@@ -335,27 +337,35 @@ export const SortableProject = (props: {
       workspacesEnabled={props.ctx.workspacesEnabled}
       closeProject={props.ctx.closeProject}
       setMenu={(value) => setState("menu", value)}
-      setOpen={(value) => props.ctx.onHoverOpenChanged(props.project.worktree, value)}
+      setOpen={(value) => {
+        if (preview()) {
+          setState("previewOpen", value)
+          return
+        }
+        props.ctx.onHoverOpenChanged(props.project.worktree, value)
+      }}
       setSuppressHover={(value) => setState("suppressHover", value)}
       language={language}
     />
   )
 
   return (
-    // @ts-ignore
     <div use:sortable classList={{ "opacity-30": sortable.isActiveDraggable }}>
       <Show when={preview() && !selected()} fallback={tile()}>
         <HoverCard
           open={!state.suppressHover && hoverOpen() && !state.menu}
           openDelay={0}
-          closeDelay={0}
+          // Longer close delay absorbs portal/gutter pointer blips and store thrash
+          // without re-entering a open→close feedback loop.
+          closeDelay={200}
           placement="right-start"
           gutter={6}
           trigger={tile()}
           onOpenChange={(value) => {
             if (state.menu) return
             if (value && state.suppressHover) return
-            props.ctx.onHoverOpenChanged(props.project.worktree, value)
+            if (value === state.previewOpen) return
+            setState("previewOpen", value)
           }}
         >
           <ProjectPreviewPanel
@@ -369,6 +379,7 @@ export const SortableProject = (props: {
             workspaceSessions={workspaceSessions}
             ctx={props.ctx}
             language={language}
+            closePreview={() => setState("previewOpen", false)}
           />
         </HoverCard>
       </Show>

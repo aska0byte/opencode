@@ -741,6 +741,23 @@ const layer = Layer.effect(
                 },
               }),
             ),
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                const message = errorMessage(error)
+                // Stream.timeout from LLM layer surfaces as TimeoutException / timeout text.
+                if (/timeout/i.test(message)) {
+                  SessionDiagnostics.markStreamInterrupted(
+                    SessionDiagnostics.streamDetails({
+                      sessionID: ctx.sessionID,
+                      messageID: ctx.assistantMessage.id,
+                      providerID: ctx.model.providerID,
+                      modelID: ctx.model.id,
+                    }),
+                    "idle-timeout",
+                  )
+                }
+              }),
+            ),
             Effect.catch(halt),
             Effect.ensuring(cleanup()),
           )

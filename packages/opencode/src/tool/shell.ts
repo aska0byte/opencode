@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Cause, Effect, Exit, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -20,6 +20,7 @@ import { Plugin } from "@/plugin"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
+import { killProcessTree } from "./shell/process-tree"
 import { BashArity } from "@/permission/arity"
 import { SessionDiagnostics } from "@/diagnostics/session"
 
@@ -426,6 +427,40 @@ export const ShellTool = Tool.define(
       }
     })
 
+    const killShellProcess = (
+      handle: {
+        readonly pid: unknown
+        readonly kill: (opts?: { forceKillAfter?: number }) => Effect.Effect<void, unknown>
+      },
+      details: ReturnType<typeof SessionDiagnostics.shellDetails>,
+      reason: "abort" | "timeout",
+    ) =>
+      Effect.gen(function* () {
+        SessionDiagnostics.markShellKillStart(details, reason)
+        const first = yield* handle.kill({ forceKillAfter: 3_000 }).pipe(Effect.exit)
+        if (Exit.isSuccess(first)) {
+          SessionDiagnostics.markShellKillEnd(details, reason)
+          return
+        }
+        const error = Cause.squash(first.cause)
+        SessionDiagnostics.markShellKillError(details, reason, error)
+
+        const pid = Number(handle.pid)
+        SessionDiagnostics.markShellKillTreeStart(details, reason, pid)
+        const tree = yield* killProcessTree(pid)
+        SessionDiagnostics.markShellKillTreeEnd(details, reason, tree)
+        if (!tree.ok) {
+          // Best-effort only: never fail the shell tool solely because kill failed.
+          // The process may already be gone, or OS may still reclaim it.
+          yield* Effect.logWarning("shell process tree kill incomplete", {
+            reason,
+            pid,
+            method: tree.method,
+            error: tree.error,
+          })
+        }
+      })
+
     const run = Effect.fn("ShellTool.run")(function* (
       input: {
         shell: string
@@ -557,25 +592,10 @@ export const ShellTool = Tool.define(
           ])
           SessionDiagnostics.markShellExit(details, exit.kind, exit.code)
 
-          if (exit.kind === "abort") {
-            aborted = true
-            SessionDiagnostics.markShellKillStart(details, "abort")
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(
-              Effect.tap(() => Effect.sync(() => SessionDiagnostics.markShellKillEnd(details, "abort"))),
-              Effect.tapError((error) => Effect.sync(() => SessionDiagnostics.markShellKillError(details, "abort", error))),
-              Effect.orDie,
-            )
-          }
-          if (exit.kind === "timeout") {
-            expired = true
-            SessionDiagnostics.markShellKillStart(details, "timeout")
-            yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(
-              Effect.tap(() => Effect.sync(() => SessionDiagnostics.markShellKillEnd(details, "timeout"))),
-              Effect.tapError((error) =>
-                Effect.sync(() => SessionDiagnostics.markShellKillError(details, "timeout", error)),
-              ),
-              Effect.orDie,
-            )
+          if (exit.kind === "abort" || exit.kind === "timeout") {
+            if (exit.kind === "abort") aborted = true
+            if (exit.kind === "timeout") expired = true
+            yield* killShellProcess(handle, details, exit.kind)
           }
 
           return exit.kind === "exit" ? exit.code : null

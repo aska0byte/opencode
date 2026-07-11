@@ -206,6 +206,24 @@ export class SessionDiagnostics {
     SidecarDiagnostics.mark("ShellTool.process.kill.error", { ...details, reason, error: errorMessage(error) })
   }
 
+  static markShellKillTreeStart(details: Details, reason: string, pid: number): void {
+    SidecarDiagnostics.mark("ShellTool.process.kill.tree.start", { ...details, reason, pid })
+  }
+
+  static markShellKillTreeEnd(
+    details: Details,
+    reason: string,
+    result: { readonly ok: boolean; readonly method: string; readonly error?: string },
+  ): void {
+    SidecarDiagnostics.mark("ShellTool.process.kill.tree.end", {
+      ...details,
+      reason,
+      ok: result.ok,
+      method: result.method,
+      error: result.error ?? null,
+    })
+  }
+
   static markShellRunEnd(details: Details, output: ShellOutput): void {
     SidecarDiagnostics.mark("ShellTool.run.end", {
       ...details,

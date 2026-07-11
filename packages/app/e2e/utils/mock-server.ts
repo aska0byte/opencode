@@ -7,6 +7,7 @@ export interface MockServerConfig {
   provider: unknown
   directory: string
   project: unknown
+  projects?: readonly unknown[]
   sessions: ({ id: string } & Record<string, unknown>)[]
   pageMessages: (sessionId: string, limit: number, before?: string) => { items: unknown[]; cursor?: string }
   vcsDiff?: unknown[]
@@ -38,7 +39,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
       directory: config.directory,
       home: "C:/OpenCode",
     },
-    "/project": [config.project],
+    "/project": config.projects ?? [config.project],
     "/project/current": config.project,
     "/agent": [{ name: "build", mode: "primary" }],
     "/vcs": { branch: "main", default_branch: "main" },

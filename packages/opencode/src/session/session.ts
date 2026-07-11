@@ -11,6 +11,7 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SidecarDiagnostics } from "@/diagnostics/sidecar"
+import { PartDeltaBatcher } from "@/diagnostics/part-delta-batcher"
 import { SessionV2 } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
 import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
@@ -635,8 +636,20 @@ const layer: Layer.Layer<
         return msg
       }).pipe(Effect.withSpan("Session.updateMessage"))
 
+    const deltaBatcher = new PartDeltaBatcher((input) =>
+      events.publish(MessageV2.Event.PartDelta, {
+        sessionID: SessionID.make(input.sessionID),
+        messageID: MessageID.make(input.messageID),
+        partID: PartID.make(input.partID),
+        field: input.field,
+        delta: input.delta,
+      }),
+    )
+
     const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
       Effect.gen(function* () {
+        // Flush coalesced deltas before the authoritative full part snapshot.
+        yield* deltaBatcher.flushPart(part.sessionID, part.messageID, part.id)
         yield* events.publish(SessionV1.Event.PartUpdated, {
           sessionID: part.sessionID,
           part: structuredClone(part),
@@ -890,7 +903,7 @@ const layer: Layer.Layer<
       field: string
       delta: string
     }) {
-      yield* events.publish(MessageV2.Event.PartDelta, input)
+      yield* deltaBatcher.enqueue(input)
     })
 
     /** Finds the first message matching the predicate, searching newest-first. */

@@ -596,6 +596,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const cursor = savedCursor ?? prompt.cursor() ?? promptLength(prompt.current())
       editorRef.focus()
       setCursorPosition(editorRef, cursor)
+      savedCursor = cursor
       queueScroll()
     })
   }
@@ -605,15 +606,26 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     restoreEndOnFocus = false
     requestAnimationFrame(() => {
       if (document.activeElement !== editorRef) return
-      setCursorPosition(editorRef, prompt.cursor() ?? promptLength(prompt.current()))
+      if (currentCursor() !== null) {
+        savedCursor = currentCursor()
+        queueScroll()
+        return
+      }
+      const cursor = savedCursor ?? prompt.cursor() ?? promptLength(prompt.current())
+      setCursorPosition(editorRef, cursor)
+      savedCursor = cursor
       queueScroll()
     })
   }
 
+  // Prefer live selection, then last known caret, then prompt store — never drop mid-text
+  // caret when a parent re-render/reconcile briefly clears the DOM selection.
   const renderEditorWithCursor = (parts: Prompt) => {
-    const cursor = currentCursor()
+    const cursor = currentCursor() ?? savedCursor ?? prompt.cursor()
     renderEditor(parts)
-    if (cursor !== null) setCursorPosition(editorRef, cursor)
+    if (cursor === null || cursor === undefined) return
+    setCursorPosition(editorRef, cursor)
+    savedCursor = cursor
   }
 
   createEffect(() => {
@@ -1059,6 +1071,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     const rawParts = parseFromDOM()
     const images = imageAttachments()
     const cursorPosition = getCursorPosition(editorRef)
+    savedCursor = cursorPosition
     const rawText =
       rawParts.length === 1 && rawParts[0]?.type === "text"
         ? rawParts[0].content
@@ -1075,6 +1088,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         mirror.input = true
         prompt.set(DEFAULT_PROMPT, 0)
       }
+      savedCursor = 0
       queueScroll()
       return
     }
@@ -1561,6 +1575,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const newSession = () => props.variant === "new-session"
   const bindEditorRef = (el: HTMLDivElement) => {
+    if (editorRef === el) return
     editorRef = el
     restoreEndOnFocus = true
     props.ref?.(el)

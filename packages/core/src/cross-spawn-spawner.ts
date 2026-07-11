@@ -295,11 +295,24 @@ export const make = Effect.gen(function* () {
     signal: NodeJS.Signals,
   ) => {
     if (globalThis.process.platform === "win32") {
+      // Prefer argv form over shell exec so paths/pids cannot be misparsed.
+      // Exit 128 = process not found (already gone) — treat as success.
       return Effect.callback<void, PlatformError.PlatformError>((resume) => {
-        NodeChildProcess.exec(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true }, (err) => {
-          if (err) return resume(Effect.fail(toPlatformError("kill", toError(err), command)))
-          resume(Effect.void)
+        const killer = NodeChildProcess.spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
         })
+        let settled = false
+        const done = (effect: Effect.Effect<void, PlatformError.PlatformError>) => {
+          if (settled) return
+          settled = true
+          resume(effect)
+        }
+        killer.once("exit", (code) => {
+          if (code === 0 || code === 128) return done(Effect.void)
+          done(Effect.fail(toPlatformError("kill", new Error(`taskkill exit ${code}`), command)))
+        })
+        killer.once("error", (err) => done(Effect.fail(toPlatformError("kill", toError(err), command))))
       })
     }
 

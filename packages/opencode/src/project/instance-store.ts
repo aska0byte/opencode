@@ -110,15 +110,8 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const existing = cache.get(directory)
-          yield* Effect.logInfo("dcp init trace: InstanceStore.load", {
-            pid: process.pid,
-            ppid: process.ppid,
-            requestedDirectory: input.directory,
-            directory,
-            worktree: input.worktree,
-            projectID: input.project?.id,
-            cache: existing ? "hit" : "miss",
-          })
+          // Cache hits are hot-path (every request). Do not log them — they filled
+          // opencode.log at ~7+/s and multi-GB over multi-project Desktop use.
           if (existing) return yield* restore(Deferred.await(existing.deferred))
 
           const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
@@ -137,15 +130,6 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const previous = cache.get(directory)
-          yield* Effect.logInfo("dcp init trace: InstanceStore.reload", {
-            pid: process.pid,
-            ppid: process.ppid,
-            requestedDirectory: input.directory,
-            directory,
-            worktree: input.worktree,
-            projectID: input.project?.id,
-            cache: previous ? "hit" : "miss",
-          })
           const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
           cache.set(directory, entry)
           yield* Effect.gen(function* () {

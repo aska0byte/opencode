@@ -35,21 +35,7 @@ const layer = Layer.effect(
       // everything depends on config so eager load it for nice traces
       yield* config.get()
       // Plugin can mutate config so it has to be initialized before anything else.
-      yield* Effect.logInfo("dcp init trace: InstanceBootstrap.plugin.init.start", {
-        pid: process.pid,
-        ppid: process.ppid,
-        directory: ctx.directory,
-        worktree: ctx.worktree,
-        projectID: ctx.project.id,
-      })
       yield* plugin.init()
-      yield* Effect.logInfo("dcp init trace: InstanceBootstrap.plugin.init.done", {
-        pid: process.pid,
-        ppid: process.ppid,
-        directory: ctx.directory,
-        worktree: ctx.worktree,
-        projectID: ctx.project.id,
-      })
       // Each service self-manages its own slow work via Effect.forkScoped against
       // its per-instance state scope. We just await materialization here.
       yield* Effect.forEach(

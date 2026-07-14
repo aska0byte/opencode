@@ -107,3 +107,26 @@ test("file logger flattens nested objects", async () => {
   expect(line).toContain("session.id=session-1")
   expect(line).not.toContain("request={")
 })
+
+test("rotateLogFile renames when over maxBytes and prunes old rotations", async () => {
+  const { rotateLogFile } = await import("../../src/observability/logging")
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-log-rotate-"))
+  await using _ = {
+    async [Symbol.asyncDispose]() {
+      await fs.rm(dir, { recursive: true, force: true })
+    },
+  }
+  const file = path.join(dir, "opencode.log")
+  await Bun.write(file, "x".repeat(100))
+  rotateLogFile(file, 50, 2)
+  expect(await Bun.file(file).exists()).toBe(false)
+  const first = (await fs.readdir(dir)).filter((name) => name.startsWith("opencode.log."))
+  expect(first).toHaveLength(1)
+
+  await Bun.write(file, "y".repeat(100))
+  rotateLogFile(file, 50, 2)
+  await Bun.write(file, "z".repeat(100))
+  rotateLogFile(file, 50, 2)
+  const rotated = (await fs.readdir(dir)).filter((name) => name.startsWith("opencode.log."))
+  expect(rotated.length).toBeLessThanOrEqual(2)
+})

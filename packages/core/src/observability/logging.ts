@@ -1,7 +1,13 @@
-import { Formatter, Logger, type LogLevel } from "effect"
+import { Effect, Formatter, Logger, type LogLevel } from "effect"
+import fs from "fs"
 import path from "path"
 import { Global } from "../global"
 import { runID } from "./shared"
+
+/** Default max size for opencode.log before rotation (20 MiB). Override with OPENCODE_LOG_MAX_BYTES. */
+export const DEFAULT_LOG_MAX_BYTES = 20 * 1024 * 1024
+/** Keep this many rotated `opencode.log.*` files. Override with OPENCODE_LOG_MAX_FILES. */
+export const DEFAULT_LOG_MAX_FILES = 5
 
 function formatter(id: string = runID) {
   return Logger.map(Logger.formatStructured, (output) => {
@@ -46,9 +52,90 @@ function format(input: unknown) {
   return /^[^\s="\\]+$/.test(value) ? value : JSON.stringify(value)
 }
 
+function logMaxBytes() {
+  const raw = process.env.OPENCODE_LOG_MAX_BYTES
+  if (!raw) return DEFAULT_LOG_MAX_BYTES
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_LOG_MAX_BYTES
+}
+
+function logMaxFiles() {
+  const raw = process.env.OPENCODE_LOG_MAX_FILES
+  if (!raw) return DEFAULT_LOG_MAX_FILES
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_LOG_MAX_FILES
+}
+
+/** Rotate `file` when it would exceed maxBytes; keep the newest maxFiles rotated siblings. */
+export function rotateLogFile(file: string, maxBytes = logMaxBytes(), maxFiles = logMaxFiles()) {
+  try {
+    const st = fs.statSync(file)
+    if (st.size < maxBytes) return
+  } catch {
+    return
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const rotated = `${file}.${stamp}`
+  try {
+    fs.renameSync(file, rotated)
+  } catch {
+    // Windows: rename can fail if another process holds the file open.
+    try {
+      fs.copyFileSync(file, rotated)
+      fs.truncateSync(file, 0)
+    } catch {
+      return
+    }
+  }
+
+  pruneRotatedLogs(file, maxFiles)
+}
+
+function pruneRotatedLogs(file: string, maxFiles: number) {
+  if (maxFiles <= 0) return
+  const dir = path.dirname(file)
+  const base = path.basename(file)
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(dir)
+  } catch {
+    return
+  }
+  const rotated = entries
+    .filter((name) => name.startsWith(`${base}.`) && name !== base)
+    .map((name) => {
+      const full = path.join(dir, name)
+      try {
+        return { full, mtime: fs.statSync(full).mtimeMs }
+      } catch {
+        return undefined
+      }
+    })
+    .filter((item): item is { full: string; mtime: number } => item !== undefined)
+    .sort((a, b) => b.mtime - a.mtime)
+
+  for (const item of rotated.slice(maxFiles)) {
+    try {
+      fs.unlinkSync(item.full)
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id: string = runID) {
-  // Do not set batchWindow to 0; it causes high idle CPU usage.
-  return Logger.toFile(formatter(id), file, { flag: "a" })
+  // Do not set batch window to 0; it causes high idle CPU usage.
+  // Custom flush so we can size-rotate (Effect Logger.toFile has no max-size option).
+  return Logger.batched(formatter(id), {
+    window: 1000,
+    flush: (output) =>
+      Effect.sync(() => {
+        const text = output.join("\n") + "\n"
+        rotateLogFile(file)
+        fs.appendFileSync(file, text)
+      }),
+  })
 }
 
 const stderrLogger = Logger.make((options) => process.stderr.write(formatter().log(options) + "\n"))

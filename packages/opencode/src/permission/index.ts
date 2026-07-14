@@ -6,6 +6,7 @@ import { Deferred, Effect, Layer, Context } from "effect"
 import os from "os"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { SessionProgress } from "@/diagnostics/session-progress"
 
 export const Event = PermissionV1.Event
 
@@ -94,12 +95,43 @@ const layer = Layer.effect(
         tool: request.tool,
       }
       yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
+      SessionProgress.markPermissionAsk({
+        id,
+        sessionID: request.sessionID,
+        permission: request.permission,
+        patternCount: request.patterns.length,
+        toolCallID: request.tool?.callID ?? null,
+      })
+      const askedAt = Date.now()
 
       const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
       pending.set(id, { info, deferred })
       yield* events.publish(Event.Asked, info)
       return yield* Effect.ensuring(
-        Deferred.await(deferred),
+        Deferred.await(deferred).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              SessionProgress.markPermissionWaitEnd({
+                id,
+                sessionID: request.sessionID,
+                permission: request.permission,
+                waitMs: Date.now() - askedAt,
+                outcome: "resolved",
+              })
+            }),
+          ),
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              SessionProgress.markPermissionWaitEnd({
+                id,
+                sessionID: request.sessionID,
+                permission: request.permission,
+                waitMs: Date.now() - askedAt,
+                outcome: error instanceof PermissionV1.CorrectedError ? "corrected" : "rejected",
+              })
+            }),
+          ),
+        ),
         Effect.sync(() => {
           pending.delete(id)
         }),
@@ -112,6 +144,11 @@ const layer = Layer.effect(
       if (!existing) return yield* new PermissionV1.NotFoundError({ requestID: input.requestID })
 
       pending.delete(input.requestID)
+      SessionProgress.markPermissionReply({
+        id: existing.info.id,
+        sessionID: existing.info.sessionID,
+        reply: input.reply,
+      })
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,

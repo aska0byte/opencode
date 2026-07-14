@@ -5,6 +5,7 @@ import { SessionID } from "@/session/schema"
 import { QuestionID } from "./schema"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { QuestionV1 } from "@opencode-ai/schema/question-v1"
+import { SessionProgress } from "@/diagnostics/session-progress"
 
 export const Option = QuestionV1.Option
 export type Option = typeof Option.Type
@@ -92,6 +93,13 @@ const layer = Layer.effect(
       const pending = (yield* InstanceState.get(state)).pending
       const id = QuestionID.ascending()
       yield* Effect.logInfo("asking", { id, questions: input.questions.length })
+      SessionProgress.markQuestionAsk({
+        id,
+        sessionID: input.sessionID,
+        questionCount: input.questions.length,
+        toolCallID: input.tool?.callID ?? null,
+      })
+      const askedAt = Date.now()
 
       const deferred = yield* Deferred.make<ReadonlyArray<Answer>, RejectedError>()
       const info: Request = {
@@ -104,7 +112,28 @@ const layer = Layer.effect(
       yield* events.publish(Event.Asked, info)
 
       return yield* Effect.ensuring(
-        Deferred.await(deferred),
+        Deferred.await(deferred).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              SessionProgress.markQuestionWaitEnd({
+                id,
+                sessionID: input.sessionID,
+                waitMs: Date.now() - askedAt,
+                outcome: "answered",
+              })
+            }),
+          ),
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              SessionProgress.markQuestionWaitEnd({
+                id,
+                sessionID: input.sessionID,
+                waitMs: Date.now() - askedAt,
+                outcome: "rejected",
+              })
+            }),
+          ),
+        ),
         Effect.sync(() => {
           pending.delete(id)
         }),
@@ -123,6 +152,11 @@ const layer = Layer.effect(
       }
       pending.delete(input.requestID)
       yield* Effect.logInfo("replied", { requestID: input.requestID, answers: input.answers })
+      SessionProgress.markQuestionReply({
+        id: existing.info.id,
+        sessionID: existing.info.sessionID,
+        answerCount: input.answers.length,
+      })
       yield* events.publish(Event.Replied, {
         sessionID: existing.info.sessionID,
         requestID: existing.info.id,

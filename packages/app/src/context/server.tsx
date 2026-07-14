@@ -8,6 +8,7 @@ import {
   createLatestPreferencePusher,
   fetchPreferences,
   mergeOpenedProjects,
+  mergeOpenedProjectsRemoteFirst,
   normalizeOpenedProjects,
   openedProjectsEqual,
   PreferenceKeys,
@@ -362,7 +363,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         return { username: active.http.username, password: active.http.password }
       }
 
-      const applyRemotePrefs = (remotePrefs: Record<string, string> | null, mode: "merge" | "replace" = "merge") => {
+      const applyRemotePrefs = (
+        remotePrefs: Record<string, string> | null,
+        mode: "merge" | "merge-remote" | "replace" = "merge",
+      ) => {
         if (!remotePrefs) return false
         // Local writes in flight own the truth until they settle; applying a stale
         // remote snapshot mid-push is the "projects disappear while opening many" path.
@@ -379,7 +383,9 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
               const next =
                 mode === "replace"
                   ? normalizeOpenedProjects(parsed)
-                  : mergeOpenedProjects(current, parsed, pathKey)
+                  : mode === "merge-remote"
+                    ? mergeOpenedProjectsRemoteFirst(current, parsed, pathKey)
+                    : mergeOpenedProjects(current, parsed, pathKey)
               // Equal snapshots (including PUT self-echo) must not replace store identity:
               // thrashing projects[] remounts the sidebar rail and drops prompt selection.
               if (!openedProjectsEqual(current, next)) {
@@ -430,9 +436,10 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
                   return
                 }
 
-                // Merge (not replace): a stale shorter remote snapshot must not erase
-                // local-only opens that survived in opencode.global.dat across restarts.
-                applyRemotePrefs(remotePrefs, "merge")
+                // Startup: remote order first so localhost / 127.0.0.1 / LAN IP clients
+                // share one rail from /preference. Local-only opens still append
+                // (mergeOpenedProjectsRemoteFirst). Live SSE refresh uses replace.
+                applyRemotePrefs(remotePrefs, "merge-remote")
 
                 // Always push the post-merge local truth so the server catches up.
                 // Previously we only seeded when the key was missing; after a race

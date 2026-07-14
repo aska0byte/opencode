@@ -145,11 +145,36 @@ export type OpenedProjectPref = { worktree: string; expanded: boolean }
  * Restart recovery must not let a stale shorter remote snapshot erase local-only
  * opens. Local order wins for shared entries; remote-only entries are appended.
  * `pathKey` normalizes Windows path casing/trailing separators.
+ *
+ * Prefer `mergeOpenedProjectsRemoteFirst` on **startup** so clients that open the
+ * same server via different hosts (localhost / 127.0.0.1 / LAN IP) share one
+ * rail order from `/preference` instead of each origin's localStorage overwriting it.
  */
 export function mergeOpenedProjects(
   local: OpenedProjectPref[] | undefined,
   remote: OpenedProjectPref[] | undefined,
   normalize: (worktree: string) => string,
+): OpenedProjectPref[] {
+  return mergeOpenedProjectLists(local, remote, normalize, "local")
+}
+
+/**
+ * Startup merge: remote order wins for shared worktrees; local-only opens append.
+ * Expanded flags still prefer the local value when both sides have the entry.
+ */
+export function mergeOpenedProjectsRemoteFirst(
+  local: OpenedProjectPref[] | undefined,
+  remote: OpenedProjectPref[] | undefined,
+  normalize: (worktree: string) => string,
+): OpenedProjectPref[] {
+  return mergeOpenedProjectLists(local, remote, normalize, "remote")
+}
+
+function mergeOpenedProjectLists(
+  local: OpenedProjectPref[] | undefined,
+  remote: OpenedProjectPref[] | undefined,
+  normalize: (worktree: string) => string,
+  primary: "local" | "remote",
 ): OpenedProjectPref[] {
   const localList = local ?? []
   const remoteList = remote ?? []
@@ -170,16 +195,18 @@ export function mergeOpenedProjects(
     }
   }
 
+  const primaryList = primary === "local" ? localList : remoteList
+  const secondaryList = primary === "local" ? remoteList : localList
   const seen = new Set<string>()
   const merged: OpenedProjectPref[] = []
-  for (const project of localList) {
+  for (const project of primaryList) {
     const key = normalize(project.worktree)
     if (seen.has(key)) continue
     seen.add(key)
     const next = byKey.get(key)
     if (next) merged.push(next)
   }
-  for (const project of remoteList) {
+  for (const project of secondaryList) {
     const key = normalize(project.worktree)
     if (seen.has(key)) continue
     seen.add(key)

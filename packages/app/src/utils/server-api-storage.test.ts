@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   createLatestPreferencePusher,
   mergeOpenedProjects,
+  mergeOpenedProjectsRemoteFirst,
   normalizeOpenedProjects,
   openedProjectsEqual,
   type PreferencePush,
@@ -131,6 +132,44 @@ describe("mergeOpenedProjects", () => {
   test("returns local when remote is empty", () => {
     const local = [{ worktree: "/a", expanded: true }]
     expect(mergeOpenedProjects(local, undefined, normalize)).toEqual(local)
+  })
+})
+
+describe("mergeOpenedProjectsRemoteFirst", () => {
+  const normalize = (worktree: string) => worktree.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+
+  test("uses remote order for shared entries and appends local-only", () => {
+    const local = [
+      { worktree: "E:\\works\\C", expanded: true },
+      { worktree: "E:\\works\\A", expanded: false },
+      { worktree: "E:\\works\\B", expanded: true },
+    ]
+    const remote = [
+      { worktree: "E:\\works\\A", expanded: true },
+      { worktree: "E:\\works\\B", expanded: true },
+    ]
+    expect(mergeOpenedProjectsRemoteFirst(local, remote, normalize)).toEqual([
+      { worktree: "E:\\works\\A", expanded: false },
+      { worktree: "E:\\works\\B", expanded: true },
+      { worktree: "E:\\works\\C", expanded: true },
+    ])
+  })
+
+  test("keeps local-only opens when remote is shorter", () => {
+    const local = [
+      { worktree: "/a", expanded: true },
+      { worktree: "/b", expanded: true },
+      { worktree: "/c", expanded: false },
+    ]
+    const remote = [
+      { worktree: "/a", expanded: true },
+      { worktree: "/b", expanded: true },
+    ]
+    expect(mergeOpenedProjectsRemoteFirst(local, remote, normalize)).toEqual([
+      { worktree: "/a", expanded: true },
+      { worktree: "/b", expanded: true },
+      { worktree: "/c", expanded: false },
+    ])
   })
 })
 

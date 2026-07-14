@@ -17,6 +17,7 @@ import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionDiagnostics } from "@/diagnostics/session"
+import { SessionProgress } from "@/diagnostics/session-progress"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
@@ -661,6 +662,13 @@ const layer = Layer.effect(
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
         return yield* Effect.gen(function* () {
+          const progress = SessionProgress.stream({
+            sessionID: ctx.sessionID,
+            messageID: ctx.assistantMessage.id,
+            providerID: ctx.model.providerID,
+            modelID: ctx.model.id,
+          })
+          let progressReason = "unknown"
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
@@ -675,6 +683,7 @@ const layer = Layer.effect(
               modelID: ctx.model.id,
             })
             SessionDiagnostics.markStreamOpen(streamDetails)
+            progress.start()
 
             yield* SessionDiagnostics.span(
               "SessionProcessor.stream",
@@ -687,6 +696,7 @@ const layer = Layer.effect(
                       eventCount += 1
                       const eventType = SessionDiagnostics.eventType(event)
                       eventTypes[eventType] = (eventTypes[eventType] ?? 0) + 1
+                      progress.onEvent(eventType)
                       if (eventCount === 1 || eventCount % 50 === 0) {
                         SessionDiagnostics.markStreamEvent(streamDetails, eventCount, event)
                       }
@@ -702,12 +712,14 @@ const layer = Layer.effect(
                   ctx.needsCompaction,
                   Object.keys(eventTypes).length,
                 )
+                progressReason = ctx.needsCompaction ? "compact" : "drain-end"
               }),
             )
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
                 aborted = true
+                progressReason = "interrupt"
                 SessionDiagnostics.markStreamInterrupted(
                   SessionDiagnostics.streamDetails({
                     sessionID: ctx.sessionID,
@@ -746,6 +758,7 @@ const layer = Layer.effect(
                 const message = errorMessage(error)
                 // Stream.timeout from LLM layer surfaces as TimeoutException / timeout text.
                 if (/timeout/i.test(message)) {
+                  progressReason = "idle-timeout"
                   SessionDiagnostics.markStreamInterrupted(
                     SessionDiagnostics.streamDetails({
                       sessionID: ctx.sessionID,
@@ -755,10 +768,17 @@ const layer = Layer.effect(
                     }),
                     "idle-timeout",
                   )
+                } else {
+                  progressReason = "error"
                 }
               }),
             ),
             Effect.catch(halt),
+            Effect.ensuring(
+              Effect.sync(() => {
+                progress.stop(progressReason)
+              }),
+            ),
             Effect.ensuring(cleanup()),
           )
 

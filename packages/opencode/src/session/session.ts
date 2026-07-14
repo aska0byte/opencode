@@ -11,6 +11,7 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SidecarDiagnostics } from "@/diagnostics/sidecar"
+import { SessionProgress } from "@/diagnostics/session-progress"
 import { PartDeltaBatcher } from "@/diagnostics/part-delta-batcher"
 import { SessionV2 } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
@@ -846,16 +847,28 @@ const layer: Layer.Layer<
         "Session.messages",
         { sessionID: input.sessionID, limit: input.limit ?? null },
         Effect.gen(function* () {
+          const startedAt = Date.now()
+          let pages = 0
           if (input.limit) {
-            return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
+            pages = 1
+            const items = (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
               Effect.provideService(Database.Service, database),
             )).items
+            SessionProgress.markMessagesDone({
+              sessionID: input.sessionID,
+              limit: input.limit,
+              count: items.length,
+              pages,
+              durationMs: Date.now() - startedAt,
+            })
+            return items
           }
 
           const size = 50
           const result = [] as SessionV1.WithParts[]
           let before: string | undefined
           while (true) {
+            pages += 1
             const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
               Effect.provideService(Database.Service, database),
             )
@@ -867,7 +880,15 @@ const layer: Layer.Layer<
             if (!page.more || !page.cursor) break
             before = page.cursor
           }
-          return result.reverse()
+          const items = result.reverse()
+          SessionProgress.markMessagesDone({
+            sessionID: input.sessionID,
+            limit: null,
+            count: items.length,
+            pages,
+            durationMs: Date.now() - startedAt,
+          })
+          return items
         }),
       )
     })

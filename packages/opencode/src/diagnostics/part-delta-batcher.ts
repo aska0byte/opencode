@@ -1,5 +1,6 @@
 import { Effect } from "effect"
 import { SidecarDiagnostics } from "./sidecar"
+import { SessionProgress } from "./session-progress"
 
 const DEFAULT_FLUSH_MS = 24
 const DEFAULT_MAX_CHARS = 8_192
@@ -57,6 +58,20 @@ export class PartDeltaBatcher {
       const item = this.pending.get(key)
       if (item && item.delta.length >= this.maxChars) return this.flushKey(key)
 
+      {
+        let totalChunks = 0
+        let totalChars = 0
+        for (const pending of this.pending.values()) {
+          totalChunks += pending.chunks
+          totalChars += pending.delta.length
+        }
+        SessionProgress.markPartDeltaPending({
+          pendingKeys: this.pending.size,
+          totalChunks,
+          totalChars,
+        })
+      }
+
       this.schedule()
       return Effect.void
     })
@@ -105,13 +120,14 @@ export class PartDeltaBatcher {
       }
       this.pending.delete(key)
       if (item.chunks > 1 || item.delta.length >= 256) {
-        SidecarDiagnostics.mark("Session.partDelta.flush", {
+        SessionProgress.markPartDeltaFlush({
           sessionID: item.sessionID,
           messageID: item.messageID,
           partID: item.partID,
           field: item.field,
           chunks: item.chunks,
           length: item.delta.length,
+          pendingRemaining: this.pending.size,
         })
       }
       return this.publish({

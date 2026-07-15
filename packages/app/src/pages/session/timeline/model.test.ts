@@ -1,6 +1,14 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2"
-import { isTimelineReady, loadOlderTimeline, selectUserMessages, selectVisibleUserMessages } from "./model"
+import {
+  clearForceSessionSync,
+  FORCE_SYNC_DEBOUNCE_MS,
+  isTimelineReady,
+  loadOlderTimeline,
+  scheduleForceSessionSync,
+  selectUserMessages,
+  selectVisibleUserMessages,
+} from "./model"
 
 const user = (id: string) => ({ id, role: "user" }) as UserMessage
 const assistant = (id: string) => ({ id, role: "assistant" }) as AssistantMessage
@@ -91,5 +99,40 @@ describe("timeline model", () => {
     ).rejects.toThrow("history failed")
 
     expect(restore).toBe(1)
+  })
+
+  afterEach(() => {
+    clearForceSessionSync()
+  })
+
+  test("coalesces rapid force sync into one call after debounce", async () => {
+    const calls: string[] = []
+    for (let i = 0; i < 5; i++) {
+      scheduleForceSessionSync({
+        sessionID: "ses_force",
+        debounceMs: FORCE_SYNC_DEBOUNCE_MS,
+        sync: (sessionID, options) => {
+          calls.push(`${sessionID}:${options?.force ? "force" : "soft"}`)
+        },
+      })
+    }
+    expect(calls).toEqual([])
+    await Bun.sleep(FORCE_SYNC_DEBOUNCE_MS + 50)
+    expect(calls).toEqual(["ses_force:force"])
+  })
+
+  test("cancels pending force sync when session changes", async () => {
+    const calls: string[] = []
+    const cancel = scheduleForceSessionSync({
+      sessionID: "ses_old",
+      debounceMs: FORCE_SYNC_DEBOUNCE_MS,
+      sync: (sessionID) => {
+        calls.push(sessionID)
+      },
+      nowSessionID: () => "ses_new",
+    })
+    cancel()
+    await Bun.sleep(FORCE_SYNC_DEBOUNCE_MS + 50)
+    expect(calls).toEqual([])
   })
 })

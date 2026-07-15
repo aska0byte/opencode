@@ -6,6 +6,47 @@ import { same } from "@/utils/same"
 
 const emptyUserMessages: UserMessage[] = []
 const sessionFreshness = 15_000
+/** Coalesce burst force-refresh when timeline re-enters a stale session. */
+export const FORCE_SYNC_DEBOUNCE_MS = 1_500
+
+const forceSyncTimers = new Map<string, number>()
+
+export function scheduleForceSessionSync(input: {
+  sessionID: string
+  sync: (sessionID: string, options?: { force?: boolean }) => unknown
+  debounceMs?: number
+  nowSessionID?: () => string | undefined
+}) {
+  const existing = forceSyncTimers.get(input.sessionID)
+  if (existing !== undefined) window.clearTimeout(existing)
+  const handle = window.setTimeout(() => {
+    forceSyncTimers.delete(input.sessionID)
+    if (input.nowSessionID && input.nowSessionID() !== input.sessionID) return
+    void input.sync(input.sessionID, { force: true })
+  }, input.debounceMs ?? FORCE_SYNC_DEBOUNCE_MS)
+  forceSyncTimers.set(input.sessionID, handle)
+  return () => {
+    const pending = forceSyncTimers.get(input.sessionID)
+    if (pending === undefined) return
+    window.clearTimeout(pending)
+    forceSyncTimers.delete(input.sessionID)
+  }
+}
+
+export function clearForceSessionSync(sessionID?: string) {
+  if (sessionID) {
+    const pending = forceSyncTimers.get(sessionID)
+    if (pending !== undefined) {
+      window.clearTimeout(pending)
+      forceSyncTimers.delete(sessionID)
+    }
+    return
+  }
+  for (const [id, pending] of forceSyncTimers) {
+    window.clearTimeout(pending)
+    forceSyncTimers.delete(id)
+  }
+}
 
 export function createTimelineModel(input: {
   sessionID: Accessor<string | undefined>
@@ -14,7 +55,7 @@ export function createTimelineModel(input: {
   const serverSync = useServerSync()
   const sync = useSync()
   let refreshFrame: number | undefined
-  let refreshTimer: number | undefined
+  let cancelForce: (() => void) | undefined
 
   const [resource] = createResource(
     () => input.sessionID(),
@@ -27,15 +68,18 @@ export function createTimelineModel(input: {
 
       refreshFrame = requestAnimationFrame(() => {
         refreshFrame = undefined
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined
-          if (input.sessionID() !== id) return
-          untrack(() => {
-            if (stale) void sync().session.sync(id, { force: true })
+        if (input.sessionID() !== id) return
+        untrack(() => {
+          if (!stale) return
+          cancelForce = scheduleForceSessionSync({
+            sessionID: id,
+            sync: (sessionID, options) => sync().session.sync(sessionID, options),
+            nowSessionID: () => input.sessionID(),
           })
-        }, 0)
+        })
       })
 
+      // Initial hydrate stays immediate (non-force).
       return sync().session.sync(id)
     },
   )
@@ -88,9 +132,9 @@ export function createTimelineModel(input: {
 
   function clearRefresh() {
     if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
-    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
     refreshFrame = undefined
-    refreshTimer = undefined
+    cancelForce?.()
+    cancelForce = undefined
   }
 }
 

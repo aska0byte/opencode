@@ -596,8 +596,26 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
     })
   }
 
-  const loadMessages = async (sessionID: string, limit: number, before?: string, mode?: "replace" | "prepend") => {
+  const loadMessages = async (
+    sessionID: string,
+    limit: number,
+    before?: string,
+    mode?: "replace" | "prepend",
+    options?: { force?: boolean },
+  ) => {
     if (meta.loading[sessionID]) return
+    // Skip full re-read when we already hold enough local messages (SSE keeps them fresh).
+    // prepend/before always fetch older pages; force always re-reads; replace reuses unless incomplete/stale.
+    if (mode !== "prepend" && !before && !options?.force) {
+      const existing = data.message[sessionID]
+      if (
+        existing !== undefined &&
+        (meta.complete[sessionID] || existing.length >= limit) &&
+        Date.now() - (meta.at[sessionID] ?? 0) <= 15_000
+      ) {
+        return
+      }
+    }
     const active = generation(sessionID)
     const load: MessageLoadState = {
       touchedMessages: new Set(),
@@ -698,7 +716,13 @@ export function createServerSession(client: OpencodeClient, options?: { retry?: 
         resolve(sessionID, options),
         cached && !options?.force
           ? Promise.resolve()
-          : loadMessages(sessionID, options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize),
+          : loadMessages(
+              sessionID,
+              options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize,
+              undefined,
+              undefined,
+              { force: options?.force },
+            ),
       ])
     })
   }

@@ -1430,4 +1430,41 @@ describe("server session", () => {
     expect(ctx.store.data.message.active?.map((message) => message.id)).toEqual(["message"])
     expect(ctx.store.data.session_status["session-0"]).toBeUndefined()
   })
+
+  test("force re-reads messages even when the 15s freshness window still holds", async () => {
+    const first = userMessage("message-1", { time: { created: 1 } })
+    const second = userMessage("message-2", { time: { created: 2 } })
+    const client = messageClient(
+      response([{ info: first, parts: [textPart(first.id)] }]),
+      response([{ info: second, parts: [textPart(second.id, { id: "part-2", text: "next" })] }]),
+    )
+    const store = createServerSession(client as never)
+    await store.sync("child")
+    expect(store.data.message.child?.map((message) => message.id)).toEqual([first.id])
+
+    // Soft re-sync within 15s should skip loadMessages when cache is warm.
+    await store.sync("child")
+    expect(client.requests).toHaveLength(1)
+
+    await store.sync("child", { force: true })
+    expect(client.requests.length).toBeGreaterThanOrEqual(2)
+    expect(store.data.message.child?.map((message) => message.id)).toEqual([second.id])
+  })
+
+  test("incomplete page load preserves already-hydrated older messages", async () => {
+    const older = userMessage("message-1", { time: { created: 1 } })
+    const newer = userMessage("message-2", { time: { created: 2 } })
+    const client = messageClient(
+      response([{ info: newer, parts: [textPart(newer.id, { id: "part-new", text: "new" })] }], "has-older"),
+      response([{ info: older, parts: [textPart(older.id, { id: "part-old", text: "old" })] }]),
+    )
+    const store = createServerSession(client as never)
+    await store.sync("child")
+    expect(store.data.message.child?.map((message) => message.id)).toEqual([newer.id])
+
+    await store.history.loadMore("child")
+    expect(store.data.message.child?.map((message) => message.id)).toEqual([older.id, newer.id])
+    expect(store.data.part[older.id]?.[0]).toMatchObject({ text: "old" })
+    expect(store.data.part[newer.id]?.[0]).toMatchObject({ text: "new" })
+  })
 })

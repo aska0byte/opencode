@@ -1297,6 +1297,7 @@ export type GlobalEvent = {
         properties: {
           file: string
           event: "add" | "change" | "unlink"
+          sessionID?: string
         }
       }
     | {
@@ -5521,6 +5522,7 @@ export type FileWatcherUpdated = {
   data: {
     file: string
     event: "add" | "change" | "unlink"
+    sessionID?: string
   }
 }
 
@@ -6765,6 +6767,7 @@ export type EventFileWatcherUpdated = {
   properties: {
     file: string
     event: "add" | "change" | "unlink"
+    sessionID?: string
   }
 }
 

@@ -215,7 +215,7 @@ export const ApplyPatchTool = Tool.define(
       })
 
       // Apply the changes
-      const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
+      const updates: Array<{ file: string; event: "add" | "change" | "unlink"; sessionID: string }> = []
 
       for (const change of fileChanges) {
         const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
@@ -224,12 +224,12 @@ export const ApplyPatchTool = Tool.define(
             // Create parent directories (recursive: true is safe on existing/root dirs)
 
             yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "add" })
+            updates.push({ file: change.filePath, event: "add", sessionID: ctx.sessionID })
             break
 
           case "update":
             yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "change" })
+            updates.push({ file: change.filePath, event: "change", sessionID: ctx.sessionID })
             break
 
           case "move":
@@ -238,14 +238,14 @@ export const ApplyPatchTool = Tool.define(
 
               yield* afs.writeWithDirs(change.movePath!, Bom.join(change.newContent, change.bom))
               yield* afs.remove(change.filePath)
-              updates.push({ file: change.filePath, event: "unlink" })
-              updates.push({ file: change.movePath, event: "add" })
+              updates.push({ file: change.filePath, event: "unlink", sessionID: ctx.sessionID })
+              updates.push({ file: change.movePath, event: "add", sessionID: ctx.sessionID })
             }
             break
 
           case "delete":
             yield* afs.remove(change.filePath)
-            updates.push({ file: change.filePath, event: "unlink" })
+            updates.push({ file: change.filePath, event: "unlink", sessionID: ctx.sessionID })
             break
         }
 
@@ -257,7 +257,7 @@ export const ApplyPatchTool = Tool.define(
         }
       }
 
-      // Publish file change events
+      // Publish file change events (session-scoped so other open sessions skip VCS refresh)
       for (const update of updates) {
         yield* events.publish(Watcher.Event.Updated, update)
       }

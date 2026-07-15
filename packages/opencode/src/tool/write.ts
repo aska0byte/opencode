@@ -69,6 +69,7 @@ export const WriteTool = Tool.define(
           yield* events.publish(Watcher.Event.Updated, {
             file: filepath,
             event: exists ? "change" : "add",
+            sessionID: ctx.sessionID,
           })
 
           let output = "Wrote file successfully."

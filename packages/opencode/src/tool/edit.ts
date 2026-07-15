@@ -116,6 +116,7 @@ export const EditTool = Tool.define(
                 yield* events.publish(Watcher.Event.Updated, {
                   file: filePath,
                   event: "add",
+                  sessionID: ctx.sessionID,
                 })
                 return
               }
@@ -160,6 +161,7 @@ export const EditTool = Tool.define(
               yield* events.publish(Watcher.Event.Updated, {
                 file: filePath,
                 event: "change",
+                sessionID: ctx.sessionID,
               })
               diff = trimDiff(
                 createTwoFilesPatch(

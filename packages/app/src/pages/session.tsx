@@ -937,6 +937,12 @@ export default function Page() {
         : undefined
     const file = typeof props?.file === "string" ? props.file : undefined
     if (!file || file.startsWith(".git/")) return
+    // Tool edits include sessionID: only the editing session refreshes.
+    // External FS watcher has no sessionID: only the currently open session page refreshes
+    // (this listener is mounted per open session view).
+    const originSession =
+      typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : undefined
+    if (originSession && originSession !== params.sessionID) return
     refreshVcs()
   })
   onCleanup(stopVcs)

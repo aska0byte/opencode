@@ -1,6 +1,6 @@
 {
   "name": "@opencode-ai/app",
-  "version": "1.17.20",
+  "version": "1.18.1",
   "description": "",
   "type": "module",
   "exports": {
@@ -47,6 +47,7 @@
     "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
+    "@opencode-ai/usage-stats": "workspace:*",
     "@corvu/drawer": "catalog:",
     "@dnd-kit/abstract": "0.5.0",
     "@dnd-kit/dom": "0.5.0",
@@ -58,7 +59,6 @@
     "@opencode-ai/sdk": "workspace:*",
     "@opencode-ai/session-ui": "workspace:*",
     "@opencode-ai/ui": "workspace:*",
-    "@opencode-ai/usage-stats": "workspace:*",
     "@pierre/trees": "1.0.0-beta.4",
     "@sentry/solid": "catalog:",
     "@shikijs/transformers": "3.9.2",

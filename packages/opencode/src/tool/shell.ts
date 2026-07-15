@@ -670,6 +670,11 @@ export const ShellTool = Tool.define(
               }
               const timeout = params.timeout ?? defaultTimeoutMs
               const ps = Shell.ps(shell)
+              const phaseDetails = SessionDiagnostics.shellDetails(
+                { shell, command: params.command, cwd, timeout },
+                { sessionID: ctx.sessionID, messageID: ctx.messageID, callID: ctx.callID },
+              )
+              SessionDiagnostics.markToolPhase(phaseDetails, "shell.parse", { timeout })
               yield* Effect.scoped(
                 Effect.gen(function* () {
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
@@ -677,7 +682,9 @@ export const ShellTool = Tool.define(
                   )
                   const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
                   if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
+                  SessionDiagnostics.markToolPhase(phaseDetails, "permission")
                   yield* ask(ctx, scan, params)
+                  SessionDiagnostics.markToolPhase(phaseDetails, "permission.done")
                 }),
               )
 

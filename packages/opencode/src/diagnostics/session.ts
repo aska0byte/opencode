@@ -72,18 +72,35 @@ export class SessionDiagnostics {
 
   static markToolBefore(details: Details): void {
     SidecarDiagnostics.mark("Tool.execute.before", details)
+    SessionDiagnostics.patchToolPhase(details, "before")
   }
 
   static markToolRun(details: Details): void {
     SidecarDiagnostics.mark("Tool.execute.run", details)
+    SessionDiagnostics.patchToolPhase(details, "run")
   }
 
   static markToolOutput(details: Details, output: ToolOutput): void {
     SidecarDiagnostics.mark("Tool.execute.output", outputDetails(details, output))
+    SessionDiagnostics.patchToolPhase(details, "output")
   }
 
   static markToolAfter(details: Details): void {
     SidecarDiagnostics.mark("Tool.execute.after", details)
+    SessionDiagnostics.patchToolPhase(details, "after")
+  }
+
+  /** Phase for active Tool.execute span: before | permission | run | shell | output | after */
+  static markToolPhase(details: Details, phase: string, extra?: Details): void {
+    const next = { ...details, ...extra, phase }
+    SidecarDiagnostics.mark(`Tool.execute.phase.${phase}`, next)
+    SessionDiagnostics.patchToolPhase(next, phase)
+  }
+
+  private static patchToolPhase(details: Details, phase: string): void {
+    const callID = details.callID
+    if (typeof callID !== "string" || callID.length === 0) return
+    SidecarDiagnostics.patchActiveByCallID(callID, { phase, tool: details.tool ?? null })
   }
 
   static markMcpBefore(details: Details): void {
@@ -176,22 +193,27 @@ export class SessionDiagnostics {
 
   static markShellRunStart(details: Details): void {
     SidecarDiagnostics.mark("ShellTool.run.start", details)
+    SessionDiagnostics.markToolPhase(details, "shell", { timeout: details.timeout ?? null })
   }
 
   static markShellSpawnStart(details: Details): void {
     SidecarDiagnostics.mark("ShellTool.process.spawn.start", details)
+    SessionDiagnostics.markToolPhase(details, "shell.spawn")
   }
 
   static markShellSpawned(details: Details, pid: string): void {
     SidecarDiagnostics.mark("ShellTool.process.spawned", { ...details, pid })
+    SessionDiagnostics.markToolPhase(details, "shell.running", { pid })
   }
 
   static markShellSpawnError(details: Details, error: unknown): void {
     SidecarDiagnostics.mark("ShellTool.process.spawn.error", { ...details, error: errorMessage(error) })
+    SessionDiagnostics.markToolPhase(details, "shell.spawn.error", { error: errorMessage(error) })
   }
 
   static markShellExit(details: Details, kind: string, code: number | null): void {
     SidecarDiagnostics.mark("ShellTool.process.exit", { ...details, exitKind: kind, exitCode: code })
+    SessionDiagnostics.markToolPhase(details, "shell.exit", { exitKind: kind, exitCode: code })
   }
 
   static markShellKillStart(details: Details, reason: string): void {

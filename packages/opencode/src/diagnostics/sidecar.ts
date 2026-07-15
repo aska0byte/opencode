@@ -6,11 +6,13 @@ export type Details = Readonly<Record<string, DetailValue>>
 export type Span = {
   readonly end: () => void
   readonly error: (message: string) => void
+  readonly setDetails?: (details: Details) => void
 }
 
 export type Probe = {
   readonly mark: (name: string, details?: Details) => void
   readonly begin: (name: string, details?: Details) => Span
+  readonly patchActiveByCallID?: (callID: string, patch: Details) => void
 }
 
 declare global {
@@ -27,6 +29,11 @@ export function clear(): void {
 
 export function mark(name: string, details?: Details): void {
   globalThis.__opencodeSidecarPerfProbe?.mark(name, details)
+}
+
+/** Update in-flight Tool.execute (etc.) active span details by callID. */
+export function patchActiveByCallID(callID: string, patch: Details): void {
+  globalThis.__opencodeSidecarPerfProbe?.patchActiveByCallID?.(callID, patch)
 }
 
 export function span<A, E, R>(name: string, details: Details, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {

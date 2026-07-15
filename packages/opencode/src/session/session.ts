@@ -41,7 +41,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Effect, Layer, Option, Context, Schema, Types } from "effect"
+import { Deferred, Effect, Layer, Option, Context, Schema, Types } from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -608,6 +608,29 @@ const layer: Layer.Layer<
       return rows.map(fromRow)
     })
 
+    // Generation-invalidated result cache for Session.messages (declared early so
+    // updateMessage/updatePart/remove* can bump before the messages() implementation).
+    const messagesGeneration = new Map<SessionID, number>()
+    const messagesCache = new Map<string, { generation: number; items: SessionV1.WithParts[] }>()
+    const MESSAGES_CACHE_MAX_KEYS = 32
+
+    const currentMessagesGeneration = (sessionID: SessionID) => messagesGeneration.get(sessionID) ?? 0
+
+    const bumpMessagesGeneration = (sessionID: SessionID) => {
+      messagesGeneration.set(sessionID, currentMessagesGeneration(sessionID) + 1)
+      for (const key of messagesCache.keys()) {
+        if (key.startsWith(`${sessionID}\0`)) messagesCache.delete(key)
+      }
+    }
+
+    const storeMessagesCache = (key: string, generation: number, items: SessionV1.WithParts[]) => {
+      if (messagesCache.size >= MESSAGES_CACHE_MAX_KEYS && !messagesCache.has(key)) {
+        const oldest = messagesCache.keys().next().value
+        if (oldest !== undefined) messagesCache.delete(oldest)
+      }
+      messagesCache.set(key, { generation, items })
+    }
+
     const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
       const session = yield* get(sessionID)
       try {
@@ -624,6 +647,8 @@ const layer: Layer.Layer<
           yield* remove(child.id)
         }
 
+        bumpMessagesGeneration(sessionID)
+        messagesGeneration.delete(sessionID)
         yield* events.publish(SessionV1.Event.Deleted, { sessionID, info: session })
         yield* events.remove(sessionID)
       } catch (error) {
@@ -633,6 +658,7 @@ const layer: Layer.Layer<
 
     const updateMessage = <T extends SessionV1.Info>(msg: T): Effect.Effect<T> =>
       Effect.gen(function* () {
+        bumpMessagesGeneration(msg.sessionID)
         yield* events.publish(SessionV1.Event.MessageUpdated, { sessionID: msg.sessionID, info: msg })
         return msg
       }).pipe(Effect.withSpan("Session.updateMessage"))
@@ -649,6 +675,7 @@ const layer: Layer.Layer<
 
     const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
       Effect.gen(function* () {
+        bumpMessagesGeneration(part.sessionID)
         // Flush coalesced deltas before the authoritative full part snapshot.
         yield* deltaBatcher.flushPart(part.sessionID, part.messageID, part.id)
         yield* events.publish(SessionV1.Event.PartUpdated, {
@@ -842,11 +869,52 @@ const layer: Layer.Layer<
       return [] as Snapshot.FileDiff[]
     })
 
+    // Coalesce concurrent identical full/paged reads for the same session.
+    const messagesInflight = new Map<string, Deferred.Deferred<SessionV1.WithParts[], NotFoundError>>()
+
     const messages: Interface["messages"] = Effect.fn("Session.messages")(function* (input) {
-      return yield* SidecarDiagnostics.span(
+      const key = `${input.sessionID}\0${input.limit ?? ""}\0`
+      const genAtStart = currentMessagesGeneration(input.sessionID)
+      const cached = messagesCache.get(key)
+      if (cached && cached.generation === genAtStart) {
+        SessionProgress.markMessagesDone({
+          sessionID: input.sessionID,
+          limit: input.limit ?? null,
+          count: cached.items.length,
+          pages: 0,
+          durationMs: 0,
+          cacheHit: true,
+          generation: genAtStart,
+        })
+        return cached.items
+      }
+
+      const existing = messagesInflight.get(key)
+      if (existing) return yield* Deferred.await(existing)
+
+      const deferred = yield* Deferred.make<SessionV1.WithParts[], NotFoundError>()
+      messagesInflight.set(key, deferred)
+
+      const load = SidecarDiagnostics.span(
         "Session.messages",
-        { sessionID: input.sessionID, limit: input.limit ?? null },
+        { sessionID: input.sessionID, limit: input.limit ?? null, generation: genAtStart },
         Effect.gen(function* () {
+          // Another writer may have filled the cache while we waited for the Deferred slot.
+          const genNow = currentMessagesGeneration(input.sessionID)
+          const again = messagesCache.get(key)
+          if (again && again.generation === genNow) {
+            SessionProgress.markMessagesDone({
+              sessionID: input.sessionID,
+              limit: input.limit ?? null,
+              count: again.items.length,
+              pages: 0,
+              durationMs: 0,
+              cacheHit: true,
+              generation: genNow,
+            })
+            return again.items
+          }
+
           const startedAt = Date.now()
           let pages = 0
           if (input.limit) {
@@ -854,12 +922,16 @@ const layer: Layer.Layer<
             const items = (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
               Effect.provideService(Database.Service, database),
             )).items
+            const genEnd = currentMessagesGeneration(input.sessionID)
+            if (genEnd === genNow) storeMessagesCache(key, genEnd, items)
             SessionProgress.markMessagesDone({
               sessionID: input.sessionID,
               limit: input.limit,
               count: items.length,
               pages,
               durationMs: Date.now() - startedAt,
+              cacheHit: false,
+              generation: genEnd,
             })
             return items
           }
@@ -881,15 +953,26 @@ const layer: Layer.Layer<
             before = page.cursor
           }
           const items = result.reverse()
+          const genEnd = currentMessagesGeneration(input.sessionID)
+          if (genEnd === genNow) storeMessagesCache(key, genEnd, items)
           SessionProgress.markMessagesDone({
             sessionID: input.sessionID,
             limit: null,
             count: items.length,
             pages,
             durationMs: Date.now() - startedAt,
+            cacheHit: false,
+            generation: genEnd,
           })
           return items
         }),
+      )
+
+      return yield* load.pipe(
+        Effect.exit,
+        Effect.tap((exit) => Deferred.done(deferred, exit)),
+        Effect.ensuring(Effect.sync(() => messagesInflight.delete(key))),
+        Effect.flatten,
       )
     })
 
@@ -897,6 +980,7 @@ const layer: Layer.Layer<
       sessionID: SessionID
       messageID: MessageID
     }) {
+      bumpMessagesGeneration(input.sessionID)
       yield* events.publish(SessionV1.Event.MessageRemoved, {
         sessionID: input.sessionID,
         messageID: input.messageID,
@@ -909,6 +993,7 @@ const layer: Layer.Layer<
       messageID: MessageID
       partID: PartID
     }) {
+      bumpMessagesGeneration(input.sessionID)
       yield* events.publish(SessionV1.Event.PartRemoved, {
         sessionID: input.sessionID,
         messageID: input.messageID,

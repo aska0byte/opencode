@@ -110,14 +110,19 @@ export class SessionProgress {
     readonly count: number
     readonly pages: number
     readonly durationMs: number
+    readonly cacheHit?: boolean
+    readonly generation?: number
   }): void {
-    if (input.durationMs < MESSAGES_SLOW_MS && input.pages <= 1) return
+    // Always record cache hits so thrash dumps can show coalesced reads.
+    if (!input.cacheHit && input.durationMs < MESSAGES_SLOW_MS && input.pages <= 1) return
     SidecarDiagnostics.mark("Session.messages.done", {
       sessionID: input.sessionID,
       limit: input.limit,
       count: input.count,
       pages: input.pages,
       durationMs: input.durationMs,
+      cacheHit: input.cacheHit ?? false,
+      generation: input.generation ?? null,
     })
   }
 

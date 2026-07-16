@@ -298,13 +298,20 @@ export function NewHome() {
     () => focusedServerCtx()?.projects.recentlyClosed() ?? layout.projects.recentlyClosed(),
   )
   const homedir = createMemo(() => focusedSync().data.path.home ?? "")
-  const selectedProject = createMemo(() => projects().find((project) => project.worktree === selection().directory))
-  const newSessionProject = createMemo(
-    () =>
+  const selectedProject = createMemo(() => {
+    const directory = selection().directory
+    if (!directory) return
+    const key = pathKey(directory)
+    return projects().find((project) => pathKey(project.worktree) === key)
+  })
+  const newSessionProject = createMemo(() => {
+    const last = focusedServerCtx()?.projects.last()
+    return (
       selectedProject() ??
-      projects().find((project) => project.worktree === focusedServerCtx()?.projects.last()) ??
-      projects()[0],
-  )
+      (last ? projects().find((project) => pathKey(project.worktree) === pathKey(last)) : undefined) ??
+      projects()[0]
+    )
+  })
   const directories = (project: LocalProject) => [project.worktree, ...(project.sandboxes ?? [])]
   const projectDirectories = createMemo(() => {
     const project = selectedProject()
@@ -461,11 +468,12 @@ export function NewHome() {
   function selectProject(conn: ServerConnection.Any, directory: string) {
     const key = ServerConnection.key(conn)
     if (global.servers.health[key]?.healthy === false) return
+    const directoryKey = pathKey(directory)
     if (
       !global
         .ensureServerCtx(conn)
         .projects.list()
-        .some((project) => project.worktree === directory)
+        .some((project) => pathKey(project.worktree) === directoryKey)
     )
       return
     setSelection(toggleHomeProjectSelection(selection(), key, directory))
@@ -965,7 +973,8 @@ function HomeProjectList(props: {
             server={props.server}
             selected={
               props.selected.server === ServerConnection.key(props.server) &&
-              props.selected.directory === project.worktree
+              props.selected.directory !== undefined &&
+              pathKey(props.selected.directory) === pathKey(project.worktree)
             }
             unseenCount={props.unseenCount(props.server, project)}
             selectProject={props.selectProject}

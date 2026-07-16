@@ -16,7 +16,10 @@ const trimTrailingSlashes = (value: string) => {
 const isWindowsPath = (value: string) => value[1] === ":" || value.startsWith("\\\\")
 
 export const pathKey = (path: string) => {
-  const value = isWindowsPath(path) ? path.replaceAll("\\", "/") : path
+  // Windows paths are case-insensitive; normalize so worktree vs session.directory
+  // comparisons (and Home project session filters) match across drive-letter spellings.
+  const windows = isWindowsPath(path)
+  const value = windows ? path.replaceAll("\\", "/").toLowerCase() : path
   const trimmed = trimTrailingSlashes(value)
   if (!trimmed && value.startsWith("/")) return "/" as PathKey
   if (isDrive(trimmed)) return `${trimmed}/` as PathKey

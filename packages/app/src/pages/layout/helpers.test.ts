@@ -18,6 +18,7 @@ import {
   homeProjectDirectories,
   homeSessionServerStatus,
   latestRootSession,
+  sameHomeProjectDirectory,
   toggleHomeProjectSelection,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
@@ -113,15 +114,21 @@ describe("layout deep links", () => {
 describe("layout workspace helpers", () => {
   test("normalizes trailing slash in workspace key", () => {
     expect(String(pathKey("/tmp/demo///"))).toBe("/tmp/demo")
-    expect(String(pathKey("C:\\tmp\\demo\\\\"))).toBe("C:/tmp/demo")
+    expect(String(pathKey("C:\\tmp\\demo\\\\"))).toBe("c:/tmp/demo")
   })
 
   test("preserves posix and drive roots in workspace key", () => {
     expect(String(pathKey("/"))).toBe("/")
     expect(String(pathKey("///"))).toBe("/")
-    expect(String(pathKey("C:\\"))).toBe("C:/")
-    expect(String(pathKey("C://"))).toBe("C:/")
-    expect(String(pathKey("C:///"))).toBe("C:/")
+    expect(String(pathKey("C:\\"))).toBe("c:/")
+    expect(String(pathKey("C://"))).toBe("c:/")
+    expect(String(pathKey("C:///"))).toBe("c:/")
+  })
+
+  test("lowercases Windows path keys so drive spellings match", () => {
+    expect(String(pathKey("E:\\works\\opencode"))).toBe(String(pathKey("e:/works/opencode")))
+    expect(String(pathKey("E:\\works\\opencode\\"))).toBe(String(pathKey("e:\\works\\opencode")))
+    expect(String(pathKey("/tmp/CaseSensitive"))).toBe("/tmp/CaseSensitive")
   })
 
   test("keeps local first while preserving known order", () => {
@@ -247,6 +254,18 @@ describe("layout workspace helpers", () => {
         "/home/luke/repos/amazon",
       ),
     ).toEqual({ server: serverKey("https://debian.example") })
+  })
+
+  test("treats equivalent Windows path spellings as the same home project", () => {
+    expect(sameHomeProjectDirectory("E:\\works\\opencode", "e:/works/opencode")).toBe(true)
+    expect(sameHomeProjectDirectory("/tmp/A", "/tmp/a")).toBe(false)
+    expect(
+      toggleHomeProjectSelection(
+        { server: serverKey("local"), directory: "E:\\works\\opencode" },
+        serverKey("local"),
+        "e:/works/opencode",
+      ),
+    ).toEqual({ server: serverKey("local") })
   })
 
   test("closes a home project through its server context", () => {

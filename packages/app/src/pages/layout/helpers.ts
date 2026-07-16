@@ -57,12 +57,17 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree) || project.worktree
 
+export function sameHomeProjectDirectory(a: string | undefined, b: string | undefined) {
+  if (a === undefined || b === undefined) return a === b
+  return pathKey(a) === pathKey(b)
+}
+
 export function toggleHomeProjectSelection(
   current: HomeProjectSelection | undefined,
   server: ServerConnection.Key,
   directory: string,
 ): HomeProjectSelection {
-  if (current?.server === server && current.directory === directory) return { server }
+  if (current?.server === server && sameHomeProjectDirectory(current.directory, directory)) return { server }
   return { server, directory }
 }
 
@@ -73,7 +78,7 @@ export function closeHomeProject(
   directory: string,
 ) {
   projects.close(directory)
-  if (selected?.server === server && selected.directory === directory) return { server }
+  if (selected?.server === server && sameHomeProjectDirectory(selected.directory, directory)) return { server }
   return selected
 }
 

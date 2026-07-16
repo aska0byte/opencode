@@ -123,15 +123,17 @@ describe("persist localStorage resilience", () => {
   test("workspace target keeps raw path storage as legacy fallback", () => {
     const target = Persist.workspace("C:\\Users\\foo", "vcs")
 
-    expect(target.storage).toBe(persistTesting.workspaceStorage("C:/Users/foo"))
-    expect(target.legacyStorageNames).toEqual([persistTesting.workspaceStorage("C:\\Users\\foo")])
+    expect(target.storage).toBe(persistTesting.workspaceStorage("c:/users/foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.workspaceStorage("C:\\Users\\foo"))
   })
 
   test("workspace target keeps backslash storage as fallback for normalized Windows paths", () => {
     const target = Persist.workspace("C:/Users/foo", "vcs")
 
-    expect(target.storage).toBe(persistTesting.workspaceStorage("C:/Users/foo"))
-    expect(target.legacyStorageNames).toEqual([persistTesting.workspaceStorage("C:\\Users\\foo")])
+    expect(target.storage).toBe(persistTesting.workspaceStorage("c:/users/foo"))
+    // Raw (pre-pathKey) and backslash spellings remain as migration fallbacks.
+    expect(target.legacyStorageNames).toContain(persistTesting.workspaceStorage("C:/Users/foo"))
+    expect(target.legacyStorageNames).toContain(persistTesting.workspaceStorage("c:\\users\\foo"))
   })
 
   test("migrates direct legacy keys into scoped storage", () => {

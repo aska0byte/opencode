@@ -1,4 +1,4 @@
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -603,9 +603,19 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       route,
       ready,
       home: {
-        selection: createMemo(() => store.home.selection),
+        // Read nested fields so project-directory toggles re-run NewHome.
+        // Returning the store proxy alone does not subscribe to directory changes.
+        selection: createMemo(() => ({
+          server: store.home.selection.server,
+          directory: store.home.selection.directory,
+        })),
         setSelection(selection: HomeProjectSelection) {
-          setStore("home", "selection", reconcile(selection))
+          // Replace the whole selection object (do not reconcile) so clearing
+          // directory on toggle-off is not left as a stale nested field.
+          setStore("home", "selection", {
+            server: selection.server,
+            directory: selection.directory,
+          })
         },
       },
       handoff: {

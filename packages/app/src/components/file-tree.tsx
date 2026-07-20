@@ -541,6 +541,9 @@ export default function FileTree(props: {
               <Match when={node.type === "file"}>
                 {withNodeContextMenu(
                   node,
+                  {/* Local fork: no left-click / double-click open in GUI (lags on large files).
+                      Callers that need click (e.g. review focus) still pass onFileClick via props
+                      only when explicitly desired; default is context-menu only. */}
                   <FileTreeNode
                     node={node}
                     level={level}
@@ -549,8 +552,9 @@ export default function FileTree(props: {
                     draggable={draggable()}
                     kinds={kinds()}
                     marks={marks()}
-                    as="button"
-                    type="button"
+                    as="div"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => props.onFileClick?.(node)}
                     onDblClick={() => props.onFileDoubleClick?.(node)}
                   >

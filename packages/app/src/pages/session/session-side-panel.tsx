@@ -812,13 +812,9 @@ export function SessionSidePanel(props: {
                         <Switch>
                           <Match when={nofiles()}>{empty(language.t("session.files.empty"))}</Match>
                           <Match when={true}>
-                            <FileTree
-                              path=""
-                              class="pt-3"
-                              modified={diffFiles()}
-                              kinds={kinds()}
-                              onFileClick={(node) => openTab(file.tab(node.path))}
-                            />
+                            {/* Do not open files in the GUI editor from the tree (too slow on large files).
+                                Use context menu: Send to Chat / Open Folder (system default app). */}
+                            <FileTree path="" class="pt-3" modified={diffFiles()} kinds={kinds()} />
                           </Match>
                         </Switch>
                       </Tabs.Content>

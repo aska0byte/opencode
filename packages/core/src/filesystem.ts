@@ -88,6 +88,9 @@ const baseLayer = Layer.effect(
         const target = yield* resolve(input.path)
         const info = yield* fs.stat(target.real).pipe(Effect.orDie)
         if (info.type !== "Directory") return yield* Effect.die(new Error("Path is not a directory"))
+        // API paths are always posix, no trailing slash. Win `path.relative` emits `\`,
+        // and directory entries used to append `path.sep` — both break GUI tree expand
+        // keys that normalize to `/` without a trailing separator.
         return yield* fs.readDirectoryEntries(target.real).pipe(
           Effect.orDie,
           Effect.map((items) =>
@@ -95,10 +98,10 @@ const baseLayer = Layer.effect(
               .flatMap((item) => {
                 if (item.type !== "file" && item.type !== "directory") return []
                 const absolute = path.join(target.absolute, item.name)
-                const relative = path.relative(target.directory, absolute)
+                const relative = path.relative(target.directory, absolute).replaceAll("\\", "/").replace(/\/+$/, "")
                 return [
                   Entry.make({
-                    path: RelativePath.make(relative + (item.type === "directory" ? path.sep : "")),
+                    path: RelativePath.make(relative),
                     type: item.type,
                   }),
                 ]

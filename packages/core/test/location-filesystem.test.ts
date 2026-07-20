@@ -49,9 +49,32 @@ describe("FileSystem", () => {
         yield* Effect.promise(() => fs.writeFile(path.join(directory, "README.md"), "# Test"))
         const entries = yield* (yield* FileSystem.Service).list()
         expect(entries.map((entry) => ({ path: entry.path, type: entry.type }))).toEqual([
-          { path: RelativePath.make("src" + path.sep), type: "directory" },
+          { path: RelativePath.make("src"), type: "directory" },
           { path: RelativePath.make("README.md"), type: "file" },
         ])
+      }).pipe(provide(directory)),
+    ),
+  )
+
+  it.live("lists nested children with posix paths (no trailing slash)", () =>
+    withTmp((directory) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => fs.mkdir(path.join(directory, "src", "lib"), { recursive: true }))
+        yield* Effect.promise(() => fs.writeFile(path.join(directory, "src", "lib", "a.ts"), "export {}"))
+        const service = yield* FileSystem.Service
+        const root = yield* service.list()
+        const src = root.find((entry) => entry.type === "directory" && entry.path === "src")
+        expect(src).toBeDefined()
+        const nested = yield* service.list({ path: RelativePath.make(src!.path) })
+        expect(nested.map((entry) => ({ path: entry.path, type: entry.type }))).toEqual([
+          { path: RelativePath.make("src/lib"), type: "directory" },
+        ])
+        for (const entry of nested) {
+          expect(entry.path.includes("\\")).toBe(false)
+          expect(entry.path.endsWith("/")).toBe(false)
+        }
+        const files = yield* service.list({ path: RelativePath.make("src/lib") })
+        expect(files.map((entry) => entry.path)).toEqual(["src/lib/a.ts"])
       }).pipe(provide(directory)),
     ),
   )

@@ -34,6 +34,7 @@ import {
 import { getStore } from "./store"
 import { SERVER_PORT_KEY, SERVER_USERNAME_KEY, SERVER_PASSWORD_KEY } from "./store-keys"
 import { setupAutoUpdater, showUpdaterDialog } from "./updater"
+import { safeWebContentsURL } from "./window-state"
 import {
   getLastFocusedWindow,
   registerRendererProtocol,
@@ -245,7 +246,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("render-process-gone", (_event, webContents, details) => {
-    writeLog("window", "app render process gone", { url: webContents.getURL(), details }, "error")
+    writeLog("window", "app render process gone", { url: safeWebContentsURL(webContents), details }, "error")
   })
 
   setRelaunchHandler(() => {

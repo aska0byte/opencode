@@ -956,7 +956,7 @@ export default function Page() {
     // (this listener is mounted per open session view).
     const originSession =
       typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : undefined
-    if (originSession && originSession !== params.sessionID) return
+    if (originSession && originSession !== params.id) return
     refreshVcs()
   })
   onCleanup(stopVcs)

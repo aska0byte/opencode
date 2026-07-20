@@ -3,11 +3,13 @@ import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2
 import {
   clearForceSessionSync,
   FORCE_SYNC_DEBOUNCE_MS,
+  isBusySessionStatus,
   isTimelineReady,
   loadOlderTimeline,
   scheduleForceSessionSync,
   selectUserMessages,
   selectVisibleUserMessages,
+  shouldForceSessionTimelineSync,
 } from "./model"
 
 const user = (id: string) => ({ id, role: "user" }) as UserMessage
@@ -134,5 +136,31 @@ describe("timeline model", () => {
     cancel()
     await Bun.sleep(FORCE_SYNC_DEBOUNCE_MS + 50)
     expect(calls).toEqual([])
+  })
+
+  test("forces timeline hydrate when switching sessions with cache", () => {
+    expect(
+      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: false, switched: true }),
+    ).toBe(true)
+    expect(
+      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: true, switched: false }),
+    ).toBe(true)
+    expect(
+      shouldForceSessionTimelineSync({ cached: true, stale: true, busy: false, switched: false }),
+    ).toBe(true)
+    expect(
+      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: false, switched: false }),
+    ).toBe(false)
+    expect(
+      shouldForceSessionTimelineSync({ cached: false, stale: false, busy: true, switched: true }),
+    ).toBe(false)
+  })
+
+  test("recognizes busy session status types", () => {
+    expect(isBusySessionStatus("busy")).toBe(true)
+    expect(isBusySessionStatus("retry")).toBe(true)
+    expect(isBusySessionStatus("compacting")).toBe(true)
+    expect(isBusySessionStatus("idle")).toBe(false)
+    expect(isBusySessionStatus(undefined)).toBe(false)
   })
 })

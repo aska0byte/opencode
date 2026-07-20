@@ -48,6 +48,20 @@ export function clearForceSessionSync(sessionID?: string) {
   }
 }
 
+/** Whether timeline hydrate should force-reload messages instead of soft cache hit. */
+export function shouldForceSessionTimelineSync(input: {
+  cached: boolean
+  stale: boolean
+  busy: boolean
+  switched: boolean
+}) {
+  return input.cached && (input.stale || input.busy || input.switched)
+}
+
+export function isBusySessionStatus(type: string | undefined) {
+  return type === "busy" || type === "retry" || type === "compacting"
+}
+
 export function createTimelineModel(input: {
   sessionID: Accessor<string | undefined>
   revertMessageID: Accessor<string | undefined>
@@ -56,31 +70,44 @@ export function createTimelineModel(input: {
   const sync = useSync()
   let refreshFrame: number | undefined
   let cancelForce: (() => void) | undefined
+  /** Previous source session id (not createResource's prior return value). */
+  let previousSessionID: string | undefined
 
   const [resource] = createResource(
     () => input.sessionID(),
     (id) => {
       clearRefresh()
+      const switched = previousSessionID !== undefined && previousSessionID !== id
+      if (previousSessionID && previousSessionID !== id) clearForceSessionSync(previousSessionID)
+      if (id) clearForceSessionSync(id)
+      previousSessionID = id
       if (!id) return
 
       const cached = untrack(() => sync().data.message[id] !== undefined)
+      const status = untrack(() => sync().data.session_status[id]?.type)
+      const busy = isBusySessionStatus(status)
+      // Soft sync early-returns when cache exists; force when switching sessions,
+      // when cache is stale, or when the session is still generating (SSE may have
+      // updated messages while this view was not mounted).
       const stale = cached && !serverSync().session.fresh(id, sessionFreshness)
+      const force = shouldForceSessionTimelineSync({ cached, stale, busy, switched })
 
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = undefined
-        if (input.sessionID() !== id) return
-        untrack(() => {
-          if (!stale) return
-          cancelForce = scheduleForceSessionSync({
-            sessionID: id,
-            sync: (sessionID, options) => sync().session.sync(sessionID, options),
-            nowSessionID: () => input.sessionID(),
+      // Debounced force only as a fallback when we did not force immediately.
+      if (stale && !force) {
+        refreshFrame = requestAnimationFrame(() => {
+          refreshFrame = undefined
+          if (input.sessionID() !== id) return
+          untrack(() => {
+            cancelForce = scheduleForceSessionSync({
+              sessionID: id,
+              sync: (sessionID, options) => sync().session.sync(sessionID, options),
+              nowSessionID: () => input.sessionID(),
+            })
           })
         })
-      })
+      }
 
-      // Initial hydrate stays immediate (non-force).
-      return sync().session.sync(id)
+      return sync().session.sync(id, force ? { force: true } : undefined)
     },
   )
   const messages = createMemo(() => {

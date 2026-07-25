@@ -126,7 +126,7 @@ export function createSessionComposerController(options?: { closeMs?: number | (
 
     setStore("responding", perm.id)
     sdk()
-      .client.permission.respond({ sessionID: perm.sessionID, permissionID: perm.id, response })
+      .api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response })
       .catch((err: unknown) => {
         if (isStalePermissionResponseFailure(err, perm)) {
           sync().set("permission", perm.sessionID, (list) => removePermissionRequest(list, perm))

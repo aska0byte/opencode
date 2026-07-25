@@ -20,6 +20,8 @@ import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
 import { ScopedKey } from "@/utils/server-scope"
 import { createPromptSubmissionState } from "./submission-state"
+import { normalizeSessionInfo } from "@/utils/session"
+import { Event } from "@opencode-ai/schema/event"
 
 type PendingPrompt = {
   abort: AbortController
@@ -39,7 +41,7 @@ export type FollowupDraft = {
 }
 
 type FollowupSendInput = {
-  client: DirectorySDK["client"]
+  api: DirectorySDK["api"]["session"]
   serverSync: ServerSync
   sync: DirectorySync
   draft: FollowupDraft
@@ -81,19 +83,21 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
         return false
       }
 
-      await input.client.session.command({
+      const messageID = Identifier.ascending("message")
+      await input.api.command({
         sessionID: input.draft.sessionID,
+        id: messageID,
         command: cmd,
         arguments: tail.join(" "),
         agent: input.draft.agent,
-        model: `${input.draft.model.providerID}/${input.draft.model.modelID}`,
-        variant: input.draft.variant,
-        parts: images.map((attachment) => ({
-          id: Identifier.ascending("part"),
-          type: "file" as const,
-          mime: attachment.mime,
-          url: attachment.dataUrl,
-          filename: attachment.filename,
+        model: {
+          id: input.draft.model.modelID,
+          providerID: input.draft.model.providerID,
+          variant: input.draft.variant,
+        },
+        files: images.map((attachment) => ({
+          uri: attachment.dataUrl,
+          name: attachment.filename,
         })),
       })
       return true
@@ -152,13 +156,37 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       return false
     }
 
-    await input.client.session.promptAsync({
+    await input.api.prompt({
       sessionID: input.draft.sessionID,
+      id: messageID,
       agent: input.draft.agent,
       model: input.draft.model,
-      messageID,
-      parts: requestParts,
       variant: input.draft.variant,
+      legacyParts: requestParts,
+      text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+      files: requestParts.flatMap((part) => {
+        if (part.type !== "file") return []
+        const text = part.source?.text
+        return [
+          {
+            uri: part.url,
+            name: part.filename,
+            mention: text ? { start: text.start, end: text.end, text: text.value } : undefined,
+          },
+        ]
+      }),
+      agents: requestParts.flatMap((part) =>
+        part.type === "agent"
+          ? [
+              {
+                name: part.name,
+                mention: part.source
+                  ? { start: part.source.start, end: part.source.end, text: part.source.value }
+                  : undefined,
+              },
+            ]
+          : [],
+      ),
     })
     return true
   } catch (err) {
@@ -210,6 +238,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const pendingKey = (sessionID: string) => ScopedKey.from(sdk().scope, sessionID)
 
   const errorMessage = (err: unknown) => {
+    if (err && typeof err === "object" && "message" in err && typeof err.message === "string") return err.message
     if (err && typeof err === "object" && "data" in err) {
       const data = (err as { data?: { message?: string } }).data
       if (data?.message) return data.message
@@ -235,9 +264,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return Promise.resolve()
     }
     return sdk()
-      .client.session.abort({
-        sessionID,
-      })
+      .api.session.interrupt({ sessionID })
       .catch(() => {})
   }
 
@@ -279,45 +306,40 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
-  let submitting = false
-
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
 
-    if (submitting) return
-    submitting = true
-    try {
-      const target = prompt.capture()
-      const submission = createPromptSubmissionState({
-        target,
-        prompt: target.current(),
-        context: target.context.items().slice(),
+    const target = prompt.capture()
+    const submission = createPromptSubmissionState({
+      target,
+      prompt: target.current(),
+      context: target.context.items().slice(),
+    })
+    const currentPrompt = submission.prompt
+    const context = submission.context
+    const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
+    const images = input.imageAttachments().slice()
+    const mode = input.mode()
+
+    if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
+      if (input.working()) void abort()
+      return
+    }
+
+    const modelSelection = input.model ?? local.model
+    const currentModel = modelSelection.current()
+    const currentAgent = local.agent.current()
+    const variant = modelSelection.variant.current()
+    if (!currentModel || !currentAgent) {
+      showToast({
+        title: language.t("prompt.toast.modelAgentRequired.title"),
+        description: language.t("prompt.toast.modelAgentRequired.description"),
       })
-      const currentPrompt = submission.prompt
-      const context = submission.context
-      const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
-      const images = input.imageAttachments().slice()
-      const mode = input.mode()
+      return
+    }
 
-      if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
-        if (input.working()) void abort()
-        return
-      }
-
-      const modelSelection = input.model ?? local.model
-      const currentModel = modelSelection.current()
-      const currentAgent = local.agent.current()
-      const variant = modelSelection.variant.current()
-      if (!currentModel || !currentAgent) {
-        showToast({
-          title: language.t("prompt.toast.modelAgentRequired.title"),
-          description: language.t("prompt.toast.modelAgentRequired.description"),
-        })
-        return
-      }
-
-      input.addToHistory(currentPrompt, mode)
-      input.resetHistoryNavigation()
+    input.addToHistory(currentPrompt, mode)
+    input.resetHistoryNavigation()
 
     const projectDirectory = sdk().directory
     const permissionState = permission.currentServerState()
@@ -369,9 +391,13 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
-      const created = await client.session
-        .create()
-        .then((x) => x.data ?? undefined)
+      const created = await sdk()
+        .api.session.create({
+          agent: currentAgent.name,
+          model: { id: currentModel.id, providerID: currentModel.provider.id, variant },
+          location: { directory: sessionDirectory },
+        })
+        .then(normalizeSessionInfo)
         .catch((err) => {
           showToast({
             title: language.t("prompt.toast.sessionCreateFailed.title"),
@@ -455,12 +481,14 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (mode === "shell") {
       clearInput()
-      client.session
-        .shell({
+      const eventID = Event.ID.create()
+      sdk()
+        .api.session.shell({
           sessionID: session.id,
+          id: eventID,
+          command: text,
           agent,
           model,
-          command: text,
         })
         .catch((err) => {
           showToast({
@@ -478,23 +506,23 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       const customCommand = sync().data.command.find((c) => c.name === commandName)
       if (customCommand) {
         clearInput()
-        client.session
-          .command({
+        const messageID = Identifier.ascending("message")
+        serverSync().session.set("session_status", session.id, { type: "busy" })
+        sdk()
+          .api.session.command({
             sessionID: session.id,
+            id: messageID,
             command: commandName,
             arguments: args.join(" "),
             agent,
-            model: `${model.providerID}/${model.modelID}`,
-            variant,
-            parts: images.map((attachment) => ({
-              id: Identifier.ascending("part"),
-              type: "file" as const,
-              mime: attachment.mime,
-              url: attachment.dataUrl,
-              filename: attachment.filename,
+            model: { id: model.modelID, providerID: model.providerID, variant },
+            files: images.map((attachment) => ({
+              uri: attachment.dataUrl,
+              name: attachment.filename,
             })),
           })
           .catch((err) => {
+            serverSync().session.set("session_status", session.id, { type: "idle" })
             showToast({
               title: language.t("prompt.toast.commandSendFailed.title"),
               description: formatServerError(err, language.t, language.t("common.requestFailed")),
@@ -577,29 +605,26 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return true
     }
 
-      void sendFollowupDraft({
-        client,
-        sync: sync(),
-        serverSync: serverSync(),
-        draft,
-        messageID,
-        optimisticBusy: sessionDirectory === projectDirectory,
-        before: waitForWorktree,
-      }).catch((err) => {
-        pending.delete(pendingKey(session.id))
-        if (sessionDirectory === projectDirectory) {
-          sync().set("session_status", session.id, { type: "idle" })
-        }
-        showToast({
-          title: language.t("prompt.toast.promptSendFailed.title"),
-          description: errorMessage(err),
-        })
-        removeOptimisticMessage()
-        if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
+    void sendFollowupDraft({
+      api: sdk().api.session,
+      sync: sync(),
+      serverSync: serverSync(),
+      draft,
+      messageID,
+      optimisticBusy: sessionDirectory === projectDirectory,
+      before: waitForWorktree,
+    }).catch((err) => {
+      pending.delete(pendingKey(session.id))
+      if (sessionDirectory === projectDirectory) {
+        sync().set("session_status", session.id, { type: "idle" })
+      }
+      showToast({
+        title: language.t("prompt.toast.promptSendFailed.title"),
+        description: errorMessage(err),
       })
-    } finally {
-      submitting = false
-    }
+      removeOptimisticMessage()
+      if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
+    })
   }
 
   return {

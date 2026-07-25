@@ -182,7 +182,7 @@ export async function spawnLocalServer(options: SpawnLocalServerOptions): Promis
     const poll = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, ready.username, ready.password)) {
+        if (await checkHealth(url, ready.password, ready.username)) {
           healthy = true
           sidecarState = "healthy"
           return
@@ -219,30 +219,36 @@ export async function spawnLocalServer(options: SpawnLocalServerOptions): Promis
   }
 }
 
-export async function checkHealth(url: string, username?: string, password?: string | null): Promise<boolean> {
-  let healthUrl: URL
+/** password is 2nd arg for WSL callers; optional username is 3rd (defaults to opencode). */
+export async function checkHealth(
+  url: string,
+  password?: string | null,
+  username = "opencode",
+): Promise<boolean> {
+  let healthUrls: URL[]
   try {
-    healthUrl = new URL("/global/health", url)
+    healthUrls = [new URL("/api/health", url), new URL("/global/health", url)]
   } catch {
     return false
   }
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`${username ?? "opencode"}:${password}`).toString("base64")
+    const auth = Buffer.from(`${username}:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 
-  try {
-    const res = await fetch(healthUrl, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(3000),
-    })
-    return res.ok
-  } catch {
-    return false
+  for (const healthUrl of healthUrls) {
+    try {
+      const res = await fetch(healthUrl, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(3000),
+      })
+      if (res.ok) return true
+    } catch {}
   }
+  return false
 }
 
 function createSidecarEnv(): Record<string, string> {

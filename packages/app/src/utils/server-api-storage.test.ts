@@ -6,6 +6,7 @@ import {
   normalizeOpenedProjects,
   openedProjectsEqual,
   resolveOpenedProjectsFromRemote,
+  type PreferencePush,
 } from "./server-api-storage"
 
 function deferred<T = void>() {

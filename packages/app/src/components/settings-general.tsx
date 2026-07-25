@@ -147,6 +147,12 @@ export const SettingsGeneral: Component = () => {
     { initialValue: false },
   )
 
+  const [checkUpdatesOnStartup, { mutate: setCheckUpdatesOnStartup }] = createResource(
+    () => (desktop() && platform.getUpdaterCheckOnStartup ? true : false),
+    () => Promise.resolve(platform.getUpdaterCheckOnStartup?.() ?? true).catch(() => true),
+    { initialValue: true },
+  )
+
   onMount(() => {
     void theme.loadThemes()
   })
@@ -198,6 +204,13 @@ export const SettingsGeneral: Component = () => {
     const update = platform.setPinchZoomEnabled?.(checked)
     if (!update) return
     void update.catch(() => setPinchZoom(!checked))
+  }
+
+  const onCheckUpdatesOnStartupChange = (checked: boolean) => {
+    setCheckUpdatesOnStartup(checked)
+    const update = platform.setUpdaterCheckOnStartup?.(checked)
+    if (!update) return
+    void Promise.resolve(update).catch(() => setCheckUpdatesOnStartup(!checked))
   }
 
   const colorSchemeOptions = createMemo((): { value: ColorScheme; label: string }[] => [
@@ -684,6 +697,17 @@ export const SettingsGeneral: Component = () => {
             />
           </div>
         </SettingsRow>
+
+        <Show when={desktop() && platform.getUpdaterCheckOnStartup && platform.setUpdaterCheckOnStartup}>
+          <SettingsRow
+            title={language.t("settings.updates.row.startup.title")}
+            description={language.t("settings.updates.row.startup.description")}
+          >
+            <div data-action="settings-check-updates-on-startup">
+              <Switch checked={checkUpdatesOnStartup.latest} onChange={onCheckUpdatesOnStartupChange} />
+            </div>
+          </SettingsRow>
+        </Show>
 
         <SettingsRow
           title={language.t("settings.updates.row.check.title")}

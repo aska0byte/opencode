@@ -150,8 +150,20 @@ function manifest() {
 }
 
 function serverLogRoots() {
-  const xdgData = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
-  return [...new Set([join(xdgData, "opencode", "log"), join(app.getPath("userData"), "opencode", "log")])]
+  const roots: string[] = []
+  if (process.env.XDG_DATA_HOME) {
+    roots.push(join(process.env.XDG_DATA_HOME, "opencode", "log"))
+  } else if (!process.env.OPENCODE_INSTANCE_DIR) {
+    // Host install only: never fall back to real homedir for portable instances.
+    roots.push(join(homedir(), ".local", "share", "opencode", "log"))
+  }
+  roots.push(join(app.getPath("userData"), "opencode", "log"))
+  const instanceDir = process.env.OPENCODE_INSTANCE_DIR
+  if (instanceDir) {
+    roots.push(join(instanceDir, "APP_DATA", "data", "opencode", "log"))
+    roots.push(join(instanceDir, "APP_DATA", "state", "diagnostics"))
+  }
+  return [...new Set(roots)]
 }
 
 type Entry = { name: string; path?: string; data?: Buffer }

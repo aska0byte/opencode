@@ -2,6 +2,7 @@ import type { Argv, InferredOptionTypes } from "yargs"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import type { Config } from "@/config/config"
 import { Effect } from "effect"
+import { hostnameForListen, readLocalServerConfigFileSync } from "@/server/local-server-config"
 
 const options = {
   port: {
@@ -65,18 +66,21 @@ export const resolveNetworkOptions = Effect.fn("Cli.resolveNetworkOptions")(func
 })
 
 export function resolveNetworkOptionsNoConfig(args: NetworkOptions, config?: ConfigV1.Info) {
+  const file = readLocalServerConfigFileSync()
   const portExplicitlySet = hasArg("--port")
   const hostnameExplicitlySet = hasArg("--hostname")
   const mdnsExplicitlySet = hasBooleanArg("--mdns")
   const mdnsDomainExplicitlySet = hasArg("--mdns-domain")
   const mdns = mdnsExplicitlySet ? args.mdns : (config?.server?.mdns ?? args.mdns)
   const mdnsDomain = mdnsDomainExplicitlySet ? args["mdns-domain"] : (config?.server?.mdnsDomain ?? args["mdns-domain"])
-  const port = portExplicitlySet ? args.port : (config?.server?.port ?? args.port)
+  const port = portExplicitlySet
+    ? args.port
+    : (config?.server?.port ?? file?.port ?? args.port)
   const hostname = hostnameExplicitlySet
     ? args.hostname
-    : mdns && !config?.server?.hostname
+    : mdns && !config?.server?.hostname && !file
       ? "0.0.0.0"
-      : (config?.server?.hostname ?? args.hostname)
+      : (config?.server?.hostname ?? (file ? hostnameForListen(file.listen) : undefined) ?? args.hostname)
   const configCors = config?.server?.cors ?? []
   const argsCors = Array.isArray(args.cors) ? args.cors : args.cors ? [args.cors] : []
   const cors = [...configCors, ...argsCors]

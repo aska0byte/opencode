@@ -263,21 +263,22 @@ const layer = Layer.effect(
       modelID: ModelV2.ID
     }) {
       if (input.session.parentID) return
+      // Re-check each user turn while title is still the default ("New session - …").
+      // Previously only the first real user message could name; failed first attempts never retried.
       if (!Session.isDefaultTitle(input.session.title)) return
 
       const real = (m: SessionV1.WithParts) =>
         m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic)
-      const idx = input.history.findIndex(real)
-      if (idx === -1) return
-      if (input.history.filter(real).length !== 1) return
+      const lastIdx = input.history.findLastIndex(real)
+      if (lastIdx === -1) return
 
-      const context = input.history.slice(0, idx + 1)
-      const firstUser = context[idx]
-      if (!firstUser || firstUser.info.role !== "user") return
-      const firstInfo = firstUser.info
+      const context = input.history.slice(0, lastIdx + 1)
+      const lastUser = context[lastIdx]
+      if (!lastUser || lastUser.info.role !== "user") return
+      const lastInfo = lastUser.info
 
-      const subtasks = firstUser.parts.filter((p): p is SessionV1.SubtaskPart => p.type === "subtask")
-      const onlySubtasks = subtasks.length > 0 && firstUser.parts.every((p) => p.type === "subtask")
+      const subtasks = lastUser.parts.filter((p): p is SessionV1.SubtaskPart => p.type === "subtask")
+      const onlySubtasks = subtasks.length > 0 && lastUser.parts.every((p) => p.type === "subtask")
 
       const ag = yield* agents.get("title")
       if (!ag) return
@@ -291,7 +292,7 @@ const layer = Layer.effect(
       const text = yield* llm
         .stream({
           agent: ag,
-          user: firstInfo,
+          user: lastInfo,
           system: [],
           small: true,
           tools: {},

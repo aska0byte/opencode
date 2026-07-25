@@ -1,4 +1,5 @@
 import { SessionID } from "@/session/schema"
+import { Option, Schema } from "effect"
 
 type Rule = { method?: string; path: string; exact?: boolean; action: "local" | "forward" }
 
@@ -25,7 +26,12 @@ export function getWorkspaceRouteSessionID(url: URL) {
     url.pathname.match(/^\/experimental\/session\/([^/]+)\/background$/)?.[1]
   if (!id) return null
 
-  return SessionID.make(id)
+  // Path segments may be background job UUIDs or other non-session ids (LLM/UI
+  // confuse task tool task_id with call_omo/background UUIDs). Decode safely —
+  // SessionID.make throws a defect and floods the error middleware ~1Hz.
+  const decoded = Schema.decodeUnknownOption(SessionID)(id)
+  if (Option.isNone(decoded)) return null
+  return decoded.value
 }
 
 export function workspaceProxyURL(target: string | URL, requestURL: URL) {

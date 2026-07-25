@@ -59,6 +59,8 @@ const api: ElectronAPI = {
   consumeInitialDeepLinks: () => ipcRenderer.invoke("consume-initial-deep-links"),
   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
   setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),
+  getLocalServerConfig: () => ipcRenderer.invoke("get-local-server-config"),
+  setLocalServerConfig: (config) => ipcRenderer.invoke("set-local-server-config", config),
   isFirstLaunchOnboardingPending: () => ipcRenderer.invoke("is-first-launch-onboarding-pending"),
   finishFirstLaunchOnboarding: (createDefaultProject) =>
     ipcRenderer.invoke("finish-first-launch-onboarding", createDefaultProject),
@@ -107,6 +109,8 @@ const api: ElectronAPI = {
   setZoomFactor: (factor) => ipcRenderer.invoke("set-zoom-factor", factor),
   getPinchZoomEnabled: () => ipcRenderer.invoke("get-pinch-zoom-enabled"),
   setPinchZoomEnabled: (enabled) => ipcRenderer.invoke("set-pinch-zoom-enabled", enabled),
+  getUpdaterCheckOnStartup: () => ipcRenderer.invoke("get-updater-check-on-startup"),
+  setUpdaterCheckOnStartup: (enabled) => ipcRenderer.invoke("set-updater-check-on-startup", enabled),
   onPinchZoomEnabledChanged: (cb) => {
     const handler = (_: unknown, enabled: boolean) => cb(enabled)
     ipcRenderer.on("pinch-zoom-enabled-changed", handler)

@@ -9,6 +9,7 @@ import { InstanceDisposed } from "@/server/event"
 import { Question } from "@/question"
 import { ConfigApi } from "./groups/config"
 import { UsageStatsApi } from "@opencode-ai/usage-stats/api-group"
+import { SessionStorageApi } from "@opencode-ai/session-storage/api-group"
 import { ControlApi } from "./groups/control"
 import { ControlPlaneApi } from "./groups/control-plane"
 import { EventApi } from "./groups/event"
@@ -77,6 +78,7 @@ export const InstanceHttpApi = HttpApi.make("opencode-instance")
   .addHttpApi(SyncApi)
   .addHttpApi(TuiApi)
   .addHttpApi(UsageStatsApi)
+  .addHttpApi(SessionStorageApi)
   .addHttpApi(WorkspaceApi)
   .addHttpApi(PreferenceApi)
   .middleware(SchemaErrorMiddleware)

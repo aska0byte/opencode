@@ -5,12 +5,14 @@ import { app, BrowserWindow, Notification, clipboard, dialog, ipcMain, shell } f
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 
-import type { FatalRendererError, ServerReadyData, TitlebarTheme } from "../preload/types"
+import type { FatalRendererError, LocalServerConfig, ServerReadyData, TitlebarTheme } from "../preload/types"
 import { runDesktopMenuAction } from "./desktop-menu-actions"
 import { setForceFocus } from "./debug"
 import { assertAttachmentBudget, createPickedFileAuthorizations } from "./attachment-picker"
 import { getStore, removeStoreFileIfEmpty } from "./store"
+import { persistLocalServerConfig, resolveLocalServerConfig } from "./local-server-config"
 import { getPinchZoomEnabled, getWindowID, setPinchZoomEnabled, setTitlebar, updateTitlebar } from "./windows"
+import { getUpdaterCheckOnStartup, setUpdaterCheckOnStartup } from "./updater"
 import type { UpdaterController } from "./updater-controller"
 import { createUpdaterSubscriptions } from "./updater-subscriptions"
 import { write as writeLog } from "./logging"
@@ -58,6 +60,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
+  )
+  ipcMain.handle("get-local-server-config", (): LocalServerConfig => resolveLocalServerConfig(getStore()))
+  ipcMain.handle("set-local-server-config", (_event: IpcMainInvokeEvent, config: unknown) =>
+    persistLocalServerConfig(getStore(), config),
   )
   ipcMain.handle("is-first-launch-onboarding-pending", () => deps.isFirstLaunchOnboardingPending())
   ipcMain.handle("finish-first-launch-onboarding", (_event: IpcMainInvokeEvent, createDefaultProject: boolean) =>
@@ -258,6 +264,10 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("get-pinch-zoom-enabled", () => getPinchZoomEnabled())
   ipcMain.handle("set-pinch-zoom-enabled", (_event: IpcMainInvokeEvent, enabled: boolean) => {
     setPinchZoomEnabled(enabled)
+  })
+  ipcMain.handle("get-updater-check-on-startup", () => getUpdaterCheckOnStartup())
+  ipcMain.handle("set-updater-check-on-startup", (_event: IpcMainInvokeEvent, enabled: boolean) => {
+    setUpdaterCheckOnStartup(enabled)
   })
   ipcMain.handle("set-titlebar", (event: IpcMainInvokeEvent, theme: TitlebarTheme) => {
     const win = BrowserWindow.fromWebContents(event.sender)

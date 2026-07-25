@@ -498,6 +498,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     child: children.child,
     peek: children.peek,
     disableMcp: children.disableMcp,
+    disposeDirectory: (directory: string, options?: { force?: boolean }) =>
+      children.disposeDirectory(directoryKey(directory), options),
     queryOptions: queryOptionsApi,
     // bootstrap,
     updateConfig: updateConfigMutation.mutateAsync,

@@ -581,6 +581,12 @@ function urls(text: string | undefined) {
     })
 }
 
+/** Only SessionIDs (ses_*) may become /session/{id} links. Reject background job UUIDs etc. */
+function asSessionID(value: unknown): string | undefined {
+  if (typeof value === "string" && value.startsWith("ses")) return value
+  return undefined
+}
+
 function sessionLink(id: string | undefined, path: string, href?: (id: string) => string | undefined) {
   if (!id) return
 
@@ -1994,8 +2000,8 @@ ToolRegistry.register({
     const i18n = useI18n()
     const location = useLocation()
     const childSessionId = createMemo(() => {
-      const value = props.metadata.sessionId
-      if (typeof value === "string" && value) return value
+      const value = asSessionID(props.metadata.sessionId)
+      if (value) return value
       return taskSession(props.input, location.pathname, data.store.session, data.store.agent)
     })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
@@ -2108,8 +2114,9 @@ ToolRegistry.register({
     const location = useLocation()
 
     const childSessionId = createMemo(() => {
-      const value = props.metadata.sessionId ?? props.input.task_id
-      if (typeof value === "string" && value) return value
+      // Prefer real session metadata; never treat background job UUIDs in task_id as sessions.
+      const value = asSessionID(props.metadata.sessionId) ?? asSessionID(props.input.task_id)
+      if (value) return value
       return taskSession(props.input, location.pathname, data.store.session, data.store.agent)
     })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))

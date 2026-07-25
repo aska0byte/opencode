@@ -100,12 +100,16 @@ export function createChildStoreManager(input: {
     })
   }
 
-  function disposeDirectory(directory: DirectoryKey) {
+  function disposeDirectory(directory: DirectoryKey, options?: { force?: boolean }) {
     const key = directory
-    if (
+    if (!key || !children[key]) return false
+    if (options?.force) {
+      // Close-project must free resources even if a pin/bootstrap is in flight.
+      pins.delete(key)
+    } else if (
       !canDisposeDirectory({
         directory: key,
-        hasStore: !!children[key],
+        hasStore: true,
         pinned: pinned(key),
         booting: input.isBooting(key),
         loadingSessions: input.isLoadingSessions(key),

@@ -10,6 +10,7 @@ import { type Session } from "@opencode-ai/sdk/v2/client"
 import {
   childSessionOnPath,
   closeHomeProject,
+  countProjectWorkingSessions,
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
@@ -18,6 +19,7 @@ import {
   homeProjectDirectories,
   homeSessionServerStatus,
   latestRootSession,
+  projectWorkspaceDirectories,
   sameHomeProjectDirectory,
   toggleHomeProjectSelection,
 } from "./helpers"
@@ -288,6 +290,32 @@ describe("layout workspace helpers", () => {
         "/shared",
       ),
     ).toEqual({ server: serverKey("https://debian.example") })
+  })
+
+  test("lists project worktree and sandboxes for dispose", () => {
+    expect(projectWorkspaceDirectories({ worktree: "/root" })).toEqual(["/root"])
+    expect(projectWorkspaceDirectories({ worktree: "/root", sandboxes: ["/a", "/b"] })).toEqual(["/root", "/a", "/b"])
+  })
+
+  test("counts working sessions only under project directories", () => {
+    const directories = { ses_a: "/root", ses_b: "/other", ses_c: "/root/sandbox" }
+    const working = new Set(["ses_a", "ses_b", "ses_c"])
+    expect(
+      countProjectWorkingSessions({
+        directories: ["/root", "/root/sandbox"],
+        sessionIDs: ["ses_a", "ses_b", "ses_c", "ses_d"],
+        getDirectory: (id) => directories[id as keyof typeof directories],
+        isWorking: (id) => working.has(id),
+      }),
+    ).toBe(2)
+    expect(
+      countProjectWorkingSessions({
+        directories: ["/root"],
+        sessionIDs: ["ses_a", "ses_b"],
+        getDirectory: (id) => directories[id as keyof typeof directories],
+        isWorking: () => false,
+      }),
+    ).toBe(0)
   })
 
   test("defers home project navigation until its server is active", () => {

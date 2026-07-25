@@ -1,5 +1,5 @@
 import { ContextMenu as Kobalte } from "@kobalte/core/context-menu"
-import { splitProps } from "solid-js"
+import { onCleanup, splitProps } from "solid-js"
 import type { ComponentProps, ParentProps } from "solid-js"
 
 export interface ContextMenuProps extends ComponentProps<typeof Kobalte> {}
@@ -26,21 +26,121 @@ function ContextMenuRoot(props: ContextMenuProps) {
   return <Kobalte {...props} data-component="context-menu" />
 }
 
-function ContextMenuTrigger(props: ParentProps<ContextMenuTriggerProps>) {
-  const [local, rest] = splitProps(props, ["class", "classList", "children"])
-  return (
-    <Kobalte.Trigger
-      {...rest}
-      data-slot="context-menu-trigger"
-      classList={{
-        ...local.classList,
-        [local.class ?? ""]: !!local.class,
-      }}
-    >
-      {local.children}
-    </Kobalte.Trigger>
-  )
-}
+	const LONG_PRESS_MS = 500
+	const LONG_PRESS_MOVE_PX = 10
+
+	/** Primary-button hold (mouse / touch / pen) → same open path as right-click. */
+	function attachLongPress(el: HTMLElement) {
+	  let timer: number | undefined
+	  let startX = 0
+	  let startY = 0
+	  let fired = false
+	  let activePointerId: number | undefined
+
+	  const clearTimer = () => {
+	    if (timer !== undefined) {
+	      window.clearTimeout(timer)
+	      timer = undefined
+	    }
+	  }
+
+	  const openAt = (x: number, y: number) => {
+	    fired = true
+	    el.dispatchEvent(
+	      new MouseEvent("contextmenu", {
+	        bubbles: true,
+	        cancelable: true,
+	        clientX: x,
+	        clientY: y,
+	        button: 2,
+	        buttons: 2,
+	        view: window,
+	      }),
+	    )
+	  }
+
+	  const onPointerDown = (e: PointerEvent) => {
+	    if (e.button !== 0) return
+	    if (e.pointerType === "mouse" && e.ctrlKey) return
+	    startX = e.clientX
+	    startY = e.clientY
+	    fired = false
+	    activePointerId = e.pointerId
+	    clearTimer()
+	    timer = window.setTimeout(() => {
+	      timer = undefined
+	      openAt(startX, startY)
+	    }, LONG_PRESS_MS)
+	  }
+
+	  const onPointerMove = (e: PointerEvent) => {
+	    if (activePointerId !== e.pointerId) return
+	    if (timer === undefined) return
+	    if (Math.hypot(e.clientX - startX, e.clientY - startY) > LONG_PRESS_MOVE_PX) clearTimer()
+	  }
+
+	  const onPointerUp = (e: PointerEvent) => {
+	    if (activePointerId !== e.pointerId) return
+	    clearTimer()
+	    activePointerId = undefined
+	    if (!fired) return
+	    e.preventDefault()
+	    e.stopPropagation()
+	  }
+
+	  const onPointerCancel = (e: PointerEvent) => {
+	    if (activePointerId !== undefined && activePointerId !== e.pointerId) return
+	    clearTimer()
+	    activePointerId = undefined
+	    fired = false
+	  }
+
+	  const onClickCapture = (e: MouseEvent) => {
+	    if (!fired) return
+	    e.preventDefault()
+	    e.stopPropagation()
+	    e.stopImmediatePropagation()
+	    fired = false
+	  }
+
+	  el.style.touchAction = el.style.touchAction || "manipulation"
+	  el.addEventListener("pointerdown", onPointerDown)
+	  el.addEventListener("pointermove", onPointerMove)
+	  el.addEventListener("pointerup", onPointerUp)
+	  el.addEventListener("pointercancel", onPointerCancel)
+	  el.addEventListener("click", onClickCapture, true)
+
+	  return () => {
+	    clearTimer()
+	    el.removeEventListener("pointerdown", onPointerDown)
+	    el.removeEventListener("pointermove", onPointerMove)
+	    el.removeEventListener("pointerup", onPointerUp)
+	    el.removeEventListener("pointercancel", onPointerCancel)
+	    el.removeEventListener("click", onClickCapture, true)
+	  }
+	}
+
+	function ContextMenuTrigger(props: ParentProps<ContextMenuTriggerProps>) {
+	  const [local, rest] = splitProps(props, ["class", "classList", "children"])
+	  return (
+	    <Kobalte.Trigger
+	      {...rest}
+	      data-slot="context-menu-trigger"
+	      classList={{
+	        ...local.classList,
+	        [local.class ?? ""]: !!local.class,
+	      }}
+	      ref={(el) => {
+	        if (!(el instanceof HTMLElement)) return
+	        onCleanup(attachLongPress(el))
+	        const userRef = (rest as { ref?: ((el: HTMLElement) => void) | HTMLElement }).ref
+	        if (typeof userRef === "function") userRef(el)
+	      }}
+	    >
+	      {local.children}
+	    </Kobalte.Trigger>
+	  )
+	}
 
 function ContextMenuIcon(props: ParentProps<ContextMenuIconProps>) {
   const [local, rest] = splitProps(props, ["class", "classList", "children"])

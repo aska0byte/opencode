@@ -4,7 +4,10 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable
 const QueryResult = Schema.Struct({
   date: Schema.String,
   project_id: Schema.String,
+  /** Resolved display label (directory basename preferred). */
   project_worktree: Schema.String,
+  /** Full path for tooltip when available. */
+  project_path: Schema.optional(Schema.String),
   model_id: Schema.String,
   call_count: Schema.Number,
   tokens_in: Schema.Number,

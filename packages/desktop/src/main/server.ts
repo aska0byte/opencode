@@ -10,18 +10,32 @@ import { DEFAULT_SERVER_URL_KEY } from "./store-keys"
 export type HealthCheck = { wait: Promise<void> }
 
 type SidecarMessage =
-  | { type: "ready" }
+  | { type: "ready"; url?: string; port?: number; username?: string; password?: string }
   | { type: "stopped" }
   | { type: "error"; error: { message: string; stack?: string } }
 
 export type SidecarListener = { stop: () => Promise<void> }
 
+export type SpawnLocalServerResult = {
+  listener: SidecarListener
+  health: HealthCheck
+  url: string
+  port: number
+  username: string
+  password: string
+}
+
 const SIDECAR_SERVICE_NAME = "opencode server"
 const SIDECAR_START_STALL_TIMEOUT = 60_000
 const SIDECAR_STOP_TIMEOUT = 6_000
 
-type SpawnLocalServerOptions = {
+export type SpawnLocalServerOptions = {
   userDataPath: string
+  instanceDir?: string
+  hostname?: string
+  port?: number
+  username?: string
+  password?: string
   onStdout?: (message: string) => void
   onStderr?: (message: string) => void
   onExit?: (code: number) => void
@@ -52,13 +66,7 @@ export function preferAppEnv(userDataPath: string) {
   })
 }
 
-export async function spawnLocalServer(
-  hostname: string,
-  port: number,
-  username: string,
-  password: string,
-  options: SpawnLocalServerOptions,
-) {
+export async function spawnLocalServer(options: SpawnLocalServerOptions): Promise<SpawnLocalServerResult> {
   const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
   const child = utilityProcess.fork(sidecar, [], {
     cwd: process.cwd(),
@@ -90,7 +98,12 @@ export async function spawnLocalServer(
   child.stdout?.on("data", (chunk: Buffer) => options.onStdout?.(chunk.toString("utf8").trimEnd()))
   child.stderr?.on("data", (chunk: Buffer) => options.onStderr?.(chunk.toString("utf8").trimEnd()))
 
-  await new Promise<void>((resolve, reject) => {
+  const ready = await new Promise<{
+    url: string
+    port: number
+    username: string
+    password: string
+  }>((resolve, reject) => {
     let done = false
     let timeout: NodeJS.Timeout
 
@@ -113,7 +126,19 @@ export async function spawnLocalServer(
         if (done) return
         done = true
         cleanup()
-        resolve()
+        const port = message.port ?? options.port
+        const username = message.username ?? options.username ?? "opencode"
+        const password = message.password ?? options.password ?? "opencode"
+        if (typeof port !== "number") {
+          fail(new Error("Sidecar ready message missing port"))
+          return
+        }
+        resolve({
+          url: message.url ?? `http://127.0.0.1:${port}`,
+          port,
+          username,
+          password,
+        })
         return
       }
       if (message.type === "error") {
@@ -134,11 +159,12 @@ export async function spawnLocalServer(
     refreshTimeout()
     child.postMessage({
       type: "start",
-      hostname,
-      port,
-      username,
-      password,
       userDataPath: options.userDataPath,
+      ...(options.instanceDir ? { instanceDir: options.instanceDir } : {}),
+      ...(options.hostname !== undefined ? { hostname: options.hostname } : {}),
+      ...(options.port !== undefined ? { port: options.port } : {}),
+      ...(options.username !== undefined ? { username: options.username } : {}),
+      ...(options.password !== undefined ? { password: options.password } : {}),
     })
   }).catch((error) => {
     if (!exited) child.kill()
@@ -146,17 +172,17 @@ export async function spawnLocalServer(
   })
 
   const wait = (async () => {
-    const url = `http://127.0.0.1:${port}`
+    const url = ready.url
     let healthy = false
     const gone = exit.promise.then((code) => {
       if (healthy) return
       throw new Error(`Sidecar exited before health check passed with code ${code}`)
     })
 
-    const ready = async () => {
+    const poll = async () => {
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, username, password)) {
+        if (await checkHealth(url, ready.username, ready.password)) {
           healthy = true
           sidecarState = "healthy"
           return
@@ -164,7 +190,7 @@ export async function spawnLocalServer(
       }
     }
 
-    await Promise.race([ready(), gone])
+    await Promise.race([poll(), gone])
   })()
 
   let stopping: Promise<void> | undefined
@@ -186,6 +212,10 @@ export async function spawnLocalServer(
       },
     },
     health: { wait },
+    url: ready.url,
+    port: ready.port,
+    username: ready.username,
+    password: ready.password,
   }
 }
 

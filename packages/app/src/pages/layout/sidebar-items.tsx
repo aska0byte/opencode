@@ -1,9 +1,11 @@
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { Avatar } from "@opencode-ai/ui/avatar"
+import { ContextMenu } from "@opencode-ai/ui/context-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Spinner } from "@opencode-ai/ui/spinner"
+import { showToast } from "@opencode-ai/ui/toast"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { A, useParams } from "@solidjs/router"
@@ -215,59 +217,95 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     />
   )
 
+  const sessionHref = () => `/${props.slug}/session/${props.session.id}`
+
+  const copySessionLink = async () => {
+    const url = new URL(sessionHref(), window.location.origin).href
+    try {
+      await navigator.clipboard.writeText(url)
+      showToast({
+        variant: "success",
+        title: language.t("session.share.copy.copied"),
+        description: url,
+      })
+    } catch {
+      showToast({
+        variant: "error",
+        title: language.t("toast.session.share.copyFailed.title"),
+      })
+    }
+  }
+
   return (
     <>
-      <div
-        data-session-id={props.session.id}
-        class="group/session relative w-full min-w-0 rounded-md cursor-default pr-3 transition-colors hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
-        style={{ "padding-left": `${8 + (props.level ?? 0) * 16}px` }}
-      >
-        <div class="flex min-w-0 items-center gap-1">
-          <div class="min-w-0 flex-1">
-            <Show
-              when={!tooltip()}
-              fallback={
-                <Tooltip
-                  placement={props.mobile ? "bottom" : "right"}
-                  value={sessionTitle(props.session.title)}
-                  gutter={10}
-                  class="min-w-0 w-full"
-                >
-                  {item}
+      <ContextMenu>
+        <ContextMenu.Trigger
+          as="div"
+          class="group/session relative w-full min-w-0 rounded-md cursor-default pr-3 transition-colors hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+          style={{ "padding-left": `${8 + (props.level ?? 0) * 16}px` }}
+          data-session-id={props.session.id}
+        >
+          <div class="flex min-w-0 items-center gap-1">
+            <div class="min-w-0 flex-1">
+              <Show
+                when={!tooltip()}
+                fallback={
+                  <Tooltip
+                    placement={props.mobile ? "bottom" : "right"}
+                    value={sessionTitle(props.session.title)}
+                    gutter={10}
+                    class="min-w-0 w-full"
+                  >
+                    {item}
+                  </Tooltip>
+                }
+              >
+                {item}
+              </Show>
+            </div>
+
+            <Show when={!props.level}>
+              <div
+                class="shrink-0 overflow-hidden transition-[width,opacity]"
+                classList={{
+                  "w-6 opacity-100 pointer-events-auto": !!props.mobile,
+                  "w-0 opacity-0 pointer-events-none": !props.mobile,
+                  "group-hover/session:w-6 group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+                  "group-focus-within/session:w-6 group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto":
+                    true,
+                }}
+              >
+                <Tooltip value={language.t("common.archive")} placement="top">
+                  <IconButton
+                    icon="archive"
+                    variant="ghost"
+                    class="size-6 rounded-md"
+                    aria-label={language.t("common.archive")}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void props.archiveSession(props.session)
+                    }}
+                  />
                 </Tooltip>
-              }
-            >
-              {item}
+              </div>
             </Show>
           </div>
-
-          <Show when={!props.level}>
-            <div
-              class="shrink-0 overflow-hidden transition-[width,opacity]"
-              classList={{
-                "w-6 opacity-100 pointer-events-auto": !!props.mobile,
-                "w-0 opacity-0 pointer-events-none": !props.mobile,
-                "group-hover/session:w-6 group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-                "group-focus-within/session:w-6 group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-              }}
-            >
-              <Tooltip value={language.t("common.archive")} placement="top">
-                <IconButton
-                  icon="archive"
-                  variant="ghost"
-                  class="size-6 rounded-md"
-                  aria-label={language.t("common.archive")}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    void props.archiveSession(props.session)
-                  }}
-                />
-              </Tooltip>
-            </div>
-          </Show>
-        </div>
-      </div>
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content>
+            <ContextMenu.Item onSelect={() => void copySessionLink()}>
+              <ContextMenu.ItemLabel>{language.t("session.share.copy.copyLink")}</ContextMenu.ItemLabel>
+            </ContextMenu.Item>
+            <Show when={!props.level}>
+              <ContextMenu.Separator />
+              <ContextMenu.Item onSelect={() => void props.archiveSession(props.session)}>
+                <ContextMenu.ItemLabel>{language.t("common.archive")}</ContextMenu.ItemLabel>
+              </ContextMenu.Item>
+            </Show>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu>
       <Show when={currentChild()} keyed>
         {(child) => (
           <div class="w-full">

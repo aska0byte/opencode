@@ -1,6 +1,7 @@
 import { Show, type Component } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { ServerConnectionForm, ServerConnectionList, useServerManagementController } from "./dialog-select-server"
+import { SettingsLocalServer } from "./settings-local-server"
 
 export const SettingsServers: Component = () => {
   const language = useLanguage()
@@ -18,6 +19,7 @@ export const SettingsServers: Component = () => {
                   <h2 class="text-16-medium text-text-strong">{language.t("status.popover.tab.servers")}</h2>
                 </div>
               </div>
+              <SettingsLocalServer />
               <ServerConnectionList controller={controller} />
             </>
           }

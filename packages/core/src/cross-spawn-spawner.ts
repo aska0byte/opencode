@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
@@ -289,6 +290,27 @@ export const make = Effect.gen(function* () {
       })
     })
 
+  // Windows taskkill and Deferred.await(exit) can hang forever (Gradle/Java trees).
+  // Bound both so handle.kill always settles and shell tools cannot stick on shell.exit.
+  const TASKKILL_TIMEOUT_MS = 5_000
+  const AWAIT_EXIT_MS = 3_000
+
+  const awaitExit = (signal: ExitSignal, command: ChildProcess.StandardCommand, waitMs: number) =>
+    Effect.raceFirst(
+      Deferred.await(signal).pipe(Effect.asVoid),
+      Effect.sleep(waitMs).pipe(
+        Effect.flatMap(() =>
+          Effect.fail(
+            toPlatformError(
+              "kill",
+              new Error(`process exit not observed within ${waitMs}ms after kill`),
+              command,
+            ),
+          ),
+        ),
+      ),
+    )
+
   const killGroup = (
     command: ChildProcess.StandardCommand,
     proc: NodeChildProcess.ChildProcess,
@@ -297,6 +319,7 @@ export const make = Effect.gen(function* () {
     if (globalThis.process.platform === "win32") {
       // Prefer argv form over shell exec so paths/pids cannot be misparsed.
       // Exit 128 = process not found (already gone) — treat as success.
+      // Hard-cap taskkill: without this, killer.once("exit") never fires and kill hangs.
       return Effect.callback<void, PlatformError.PlatformError>((resume) => {
         const killer = NodeChildProcess.spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {
           windowsHide: true,
@@ -306,8 +329,21 @@ export const make = Effect.gen(function* () {
         const done = (effect: Effect.Effect<void, PlatformError.PlatformError>) => {
           if (settled) return
           settled = true
+          clearTimeout(timer)
           resume(effect)
         }
+        const timer = setTimeout(() => {
+          try {
+            killer.kill()
+          } catch {
+            // best-effort only
+          }
+          done(
+            Effect.fail(
+              toPlatformError("kill", new Error(`taskkill timed out after ${TASKKILL_TIMEOUT_MS}ms`), command),
+            ),
+          )
+        }, TASKKILL_TIMEOUT_MS)
         killer.once("exit", (code) => {
           if (code === 0 || code === 128) return done(Effect.void)
           done(Effect.fail(toPlatformError("kill", new Error(`taskkill exit ${code}`), command)))
@@ -349,10 +385,11 @@ export const make = Effect.gen(function* () {
     ) => {
       const signal = opts?.killSignal ?? "SIGTERM"
       if (Predicate.isUndefined(opts?.forceKillAfter)) return f(command, proc, signal)
-      return Effect.timeoutOrElse(f(command, proc, signal), {
-        duration: opts.forceKillAfter,
-        orElse: () => f(command, proc, "SIGKILL"),
-      })
+      // Effect.timeoutOrElse is not available on this Effect version; use timeoutOption.
+      return f(command, proc, signal).pipe(
+        Effect.timeoutOption(opts.forceKillAfter),
+        Effect.flatMap((opt) => (Option.isSome(opt) ? Effect.succeed(opt.value) : f(command, proc, "SIGKILL"))),
+      )
     }
 
   const source = (handle: ChildProcessHandle, from: ChildProcess.PipeFromOption | undefined) => {
@@ -404,13 +441,23 @@ export const make = Effect.gen(function* () {
               const send = (s: NodeJS.Signals) =>
                 Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
               const sig = command.options.killSignal ?? "SIGTERM"
-              const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
+              // Always bound exit wait so scope teardown cannot hang the event loop.
+              const waitExit = (ms: number) => awaitExit(signal, command, ms)
               const escalated = command.options.forceKillAfter
-                ? Effect.timeoutOrElse(attempt, {
-                    duration: command.options.forceKillAfter,
-                    orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
-                  })
-                : attempt
+                ? send(sig).pipe(
+                    Effect.andThen(
+                      Deferred.await(signal).pipe(
+                        Effect.asVoid,
+                        Effect.timeoutOption(command.options.forceKillAfter),
+                        Effect.flatMap((opt) =>
+                          Option.isSome(opt)
+                            ? Effect.void
+                            : send("SIGKILL").pipe(Effect.andThen(waitExit(AWAIT_EXIT_MS))),
+                        ),
+                      ),
+                    ),
+                  )
+                : send(sig).pipe(Effect.andThen(waitExit(AWAIT_EXIT_MS)))
               return yield* Effect.ignore(escalated)
             }),
           )
@@ -441,12 +488,24 @@ export const make = Effect.gen(function* () {
               const sig = opts?.killSignal ?? "SIGTERM"
               const send = (s: NodeJS.Signals) =>
                 Effect.catch(killGroup(command, proc, s), () => killOne(command, proc, s))
-              const attempt = send(sig).pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid)
-              if (!opts?.forceKillAfter) return attempt
-              return Effect.timeoutOrElse(attempt, {
-                duration: opts.forceKillAfter,
-                orElse: () => send("SIGKILL").pipe(Effect.andThen(Deferred.await(signal)), Effect.asVoid),
-              })
+              // Bound exit observation: forceKillAfter only escalates the signal; without
+              // a hard wait cap, Deferred.await(exit) can hang forever after taskkill/SIGKILL.
+              if (!opts?.forceKillAfter) {
+                return send(sig).pipe(Effect.andThen(awaitExit(signal, command, AWAIT_EXIT_MS)))
+              }
+              return send(sig).pipe(
+                Effect.andThen(
+                  Deferred.await(signal).pipe(
+                    Effect.asVoid,
+                    Effect.timeoutOption(opts.forceKillAfter),
+                    Effect.flatMap((opt) =>
+                      Option.isSome(opt)
+                        ? Effect.void
+                        : send("SIGKILL").pipe(Effect.andThen(awaitExit(signal, command, AWAIT_EXIT_MS))),
+                    ),
+                  ),
+                ),
+              )
             },
             unref: Effect.sync(() => {
               if (ref) {

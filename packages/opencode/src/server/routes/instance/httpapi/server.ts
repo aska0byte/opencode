@@ -64,6 +64,8 @@ import { PtyTicket } from "@opencode-ai/core/pty/ticket"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { node as usageStatsNode } from "@opencode-ai/usage-stats/service"
+import { node as sessionStorageNode } from "@opencode-ai/session-storage/service"
+import { sessionStorageHandlers } from "@opencode-ai/session-storage/api-handler"
 import { SessionV2 } from "@opencode-ai/core/session"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
@@ -171,6 +173,7 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     syncHandlers,
     tuiHandlers,
     usageStatsHandlers,
+    sessionStorageHandlers,
     workspaceHandlers,
     preferenceHandlers,
   ]),
@@ -272,6 +275,7 @@ const app = LayerNode.group([
   ProjectCopy.node,
   PtyTicket.node,
   usageStatsNode,
+  sessionStorageNode,
 ])
 
 export function createRoutes(

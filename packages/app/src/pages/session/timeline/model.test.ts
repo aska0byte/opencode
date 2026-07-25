@@ -138,22 +138,15 @@ describe("timeline model", () => {
     expect(calls).toEqual([])
   })
 
-  test("forces timeline hydrate when switching sessions with cache", () => {
+  test("forces timeline hydrate whenever message cache is warm", () => {
+    // Soft sync early-return is the stuck-UI path after remount/switch — always force if cached.
+    expect(
+      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: false, switched: false }),
+    ).toBe(true)
     expect(
       shouldForceSessionTimelineSync({ cached: true, stale: false, busy: false, switched: true }),
     ).toBe(true)
-    expect(
-      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: true, switched: false }),
-    ).toBe(true)
-    expect(
-      shouldForceSessionTimelineSync({ cached: true, stale: true, busy: false, switched: false }),
-    ).toBe(true)
-    expect(
-      shouldForceSessionTimelineSync({ cached: true, stale: false, busy: false, switched: false }),
-    ).toBe(false)
-    expect(
-      shouldForceSessionTimelineSync({ cached: false, stale: false, busy: true, switched: true }),
-    ).toBe(false)
+    expect(shouldForceSessionTimelineSync({ cached: false, switched: true, busy: true })).toBe(false)
   })
 
   test("recognizes busy session status types", () => {

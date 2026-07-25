@@ -388,6 +388,41 @@ describe("tool.task", () => {
     }),
   )
 
+  it.instance("execute ignores non-SessionID task_id (background job UUID) without defect", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps = stubOps({ text: "created" })
+
+      const result = yield* def.execute(
+        {
+          description: "fresh work",
+          prompt: "do not resume",
+          subagent_type: "general",
+          task_id: "d81fcf85-d659-4118-8723-9c36e6a5138c",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      const kids = yield* sessions.children(chat.id)
+      expect(kids).toHaveLength(1)
+      expect(kids[0]?.id).toBe(result.metadata.sessionId)
+      expect(String(result.metadata.sessionId)).toMatch(/^ses/)
+      expect(result.metadata.sessionId).not.toBe("d81fcf85-d659-4118-8723-9c36e6a5138c")
+    }),
+  )
+
   it.instance("prevents subagents from launching subagents by default", () =>
     Effect.gen(function* () {
       const sessions = yield* Session.Service

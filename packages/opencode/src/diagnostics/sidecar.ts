@@ -36,20 +36,28 @@ export function patchActiveByCallID(callID: string, patch: Details): void {
   globalThis.__opencodeSidecarPerfProbe?.patchActiveByCallID?.(callID, patch)
 }
 
+/**
+ * Wrap an Effect with a probe span that always closes on success, failure, defect,
+ * or interruption. Do not use `yield* effect.pipe(Effect.exit)` then end the span
+ * afterward: outer Fiber.interrupt skips that continuation and leaks active spans.
+ */
 export function span<A, E, R>(name: string, details: Details, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
   const probe = globalThis.__opencodeSidecarPerfProbe
   if (!probe) return effect
 
-  return Effect.gen(function* () {
+  return Effect.suspend(() => {
     const active = probe.begin(name, details)
-    const exit = yield* effect.pipe(Effect.exit)
-    if (Exit.isSuccess(exit)) {
-      active.end()
-      return exit.value
-    }
-
-    active.error(Cause.pretty(exit.cause))
-    return yield* Effect.failCause(exit.cause)
+    return effect.pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (Exit.isSuccess(exit)) {
+            active.end()
+            return
+          }
+          active.error(Cause.pretty(exit.cause))
+        }),
+      ),
+    )
   })
 }
 

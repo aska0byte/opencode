@@ -909,6 +909,176 @@ it.live("session.processor effect tests mark pending tools as aborted on cleanup
   ),
 )
 
+const missingToolResultLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.make(
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputStart({ id: "call-handoff", name: "lookup" }),
+        LLMEvent.toolCall({ id: "call-handoff", name: "lookup", input: { query: "x" } }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ),
+  }),
+)
+const missingToolResultEnv = LayerNode.compile(root, [
+  ...replacements,
+  [LLM.node, missingToolResultLLM],
+])
+const itMissingToolResult = testEffect(missingToolResultEnv)
+
+const unmatchedToolResultLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.make(
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolInputStart({ id: "call-known", name: "lookup" }),
+        LLMEvent.toolCall({ id: "call-known", name: "lookup", input: { query: "x" } }),
+        LLMEvent.toolResult({
+          id: "call-unknown",
+          name: "lookup",
+          result: { type: "json", value: { title: "miss", output: "nope", metadata: {} } },
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+        LLMEvent.finish({ reason: "tool-calls" }),
+      ),
+  }),
+)
+const unmatchedToolResultEnv = LayerNode.compile(root, [
+  ...replacements,
+  [LLM.node, unmatchedToolResultLLM],
+])
+const itUnmatchedToolResult = testEffect(unmatchedToolResultEnv)
+
+itMissingToolResult.live("session.processor effect tests handoff-timeout missing tool-result", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS = "80"
+        const database = yield* Database.Service
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "handoff timeout")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies SessionV1.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "handoff timeout" }],
+          tools: {},
+        })
+
+        const parts = yield* MessageV2.parts(msg.id).pipe(Effect.provideService(Database.Service, database))
+        const call = parts.find((part): part is SessionV1.ToolPart => part.type === "tool")
+        const stored = yield* MessageV2.get({ sessionID: chat.id, messageID: msg.id }).pipe(
+          Effect.provideService(Database.Service, database),
+        )
+
+        expect(value).toBe("continue")
+        expect(call?.callID).toBe("call-handoff")
+        expect(call?.state.status).toBe("error")
+        if (call?.state.status === "error") {
+          expect(call.state.error).toBe("Tool result handoff timed out")
+          expect(call.state.metadata?.handoffTimeout).toBe(true)
+          expect(call.state.metadata?.interrupted).toBe(false)
+          expect(call.state.time.end).toBeDefined()
+        }
+        expect(stored.info.role).toBe("assistant")
+        if (stored.info.role === "assistant") {
+          expect(stored.info.time.completed).toBeDefined()
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS
+          }),
+        ),
+      ),
+    { config: cfg },
+  ),
+)
+
+itUnmatchedToolResult.live("session.processor effect tests unmatched tool-result does not complete known call", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS = "80"
+        const database = yield* Database.Service
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "unmatched result")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies SessionV1.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "unmatched result" }],
+          tools: {},
+        })
+
+        const parts = yield* MessageV2.parts(msg.id).pipe(Effect.provideService(Database.Service, database))
+        const call = parts.find(
+          (part): part is SessionV1.ToolPart => part.type === "tool" && part.callID === "call-known",
+        )
+        const stored = yield* MessageV2.get({ sessionID: chat.id, messageID: msg.id }).pipe(
+          Effect.provideService(Database.Service, database),
+        )
+
+        expect(value).toBe("continue")
+        expect(call?.state.status).toBe("error")
+        if (call?.state.status === "error") {
+          expect(call.state.error).toBe("Tool result handoff timed out")
+          expect(call.state.metadata?.handoffTimeout).toBe(true)
+        }
+        expect(stored.info.role).toBe("assistant")
+        if (stored.info.role === "assistant") {
+          expect(stored.info.time.completed).toBeDefined()
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS
+          }),
+        ),
+      ),
+    { config: cfg },
+  ),
+)
+
 it.live("session.processor effect tests record aborted errors and idle state", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

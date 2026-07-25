@@ -60,6 +60,16 @@ describe("getWorkspaceRouteSessionID", () => {
     const url = new URL("http://localhost/session")
     expect(getWorkspaceRouteSessionID(url)).toBeNull()
   })
+
+  test("returns null for non-SessionID path segment (background job UUID)", () => {
+    const url = new URL("http://localhost/session/d81fcf85-d659-4118-8723-9c36e6a5138c")
+    expect(getWorkspaceRouteSessionID(url)).toBeNull()
+  })
+
+  test("returns null for non-SessionID on experimental background path", () => {
+    const url = new URL("http://localhost/experimental/session/d81fcf85-d659-4118-8723-9c36e6a5138c/background")
+    expect(getWorkspaceRouteSessionID(url)).toBeNull()
+  })
 })
 
 describe("workspaceProxyURL", () => {

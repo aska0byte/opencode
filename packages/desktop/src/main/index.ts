@@ -11,6 +11,11 @@ import { Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
+import {
+  ensureInstanceLayout,
+  parseInstanceDirArg,
+  resolveInstanceLayout,
+} from "../../../opencode/src/portable-instance"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
@@ -32,8 +37,8 @@ import {
   type SidecarListener,
 } from "./server"
 import { getStore } from "./store"
-import { SERVER_PORT_KEY, SERVER_USERNAME_KEY, SERVER_PASSWORD_KEY } from "./store-keys"
-import { setupAutoUpdater, showUpdaterDialog } from "./updater"
+import { hostnameForListen, resolveLocalServerConfig } from "./local-server-config"
+import { getUpdaterCheckOnStartup, setupAutoUpdater, showUpdaterDialog } from "./updater"
 import { safeWebContentsURL } from "./window-state"
 import {
   getLastFocusedWindow,
@@ -120,7 +125,14 @@ const main = Effect.gen(function* () {
   } catch {}
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
+  const instanceDir = parseInstanceDirArg(process.argv)
+  const instanceLayout = instanceDir ? resolveInstanceLayout(instanceDir) : undefined
+  if (instanceLayout) {
+    ensureInstanceLayout(instanceLayout)
+    process.env.OPENCODE_INSTANCE_DIR = instanceLayout.instanceDir
+  }
   const onboardingTestRoot = ((): string | undefined => {
+    if (instanceLayout) return
     if (!TEST_ONBOARDING) return
 
     const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
@@ -137,11 +149,20 @@ const main = Effect.gen(function* () {
   })()
   app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
   app.setAppUserModelId(appId)
-  app.setPath(
-    "userData",
-    onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
-  )
-  if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
+  // Must set userData before requestSingleInstanceLock so multi-instance portable
+  // builds use distinct Electron ProcessSingleton locks.
+  if (instanceLayout) {
+    app.setPath("userData", instanceLayout.userData)
+    app.setPath("sessionData", instanceLayout.sessionData)
+    app.setPath("crashDumps", instanceLayout.crashDumps)
+    app.setPath("downloads", instanceLayout.downloads)
+  } else {
+    app.setPath(
+      "userData",
+      onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
+    )
+    if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
+  }
   initializeOldLayoutEligibility(app.getPath("userData"))
   logger = initLogging()
   initCrashReporter()
@@ -188,6 +209,7 @@ const main = Effect.gen(function* () {
     version: app.getVersion(),
     packaged: app.isPackaged,
     onboardingTest: Boolean(onboardingTestRoot),
+    instanceDir: instanceLayout?.instanceDir,
   })
 
   ensureLoopbackNoProxy()
@@ -312,7 +334,7 @@ const main = Effect.gen(function* () {
     recordFatalRendererError: (error) => writeLog("renderer", "fatal renderer error", { ...error }, "error"),
   })
   registerWslIpcHandlers(wslServers)
-  void updater.start()
+  if (getUpdaterCheckOnStartup()) void updater.start()
   const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
   updateTimer.unref()
   app.once("will-quit", () => clearInterval(updateTimer))
@@ -324,40 +346,50 @@ const main = Effect.gen(function* () {
     ),
   )
 
-  const store = getStore()
-  const port = Number(store.get(SERVER_PORT_KEY)) || Number(process.env.OPENCODE_PORT) || 4096
-  const hostname = "0.0.0.0"
-  const username = (store.get(SERVER_USERNAME_KEY) as string) || process.env.OPENCODE_SERVER_USERNAME || "opencode"
-  const password = (store.get(SERVER_PASSWORD_KEY) as string) || process.env.OPENCODE_SERVER_PASSWORD || "yiyisoftware"
-  const loopbackUrl = `http://127.0.0.1:${port}`
-
   const loadingTask = yield* Effect.gen(function* () {
-    logger.log("sidecar connection started", { url: loopbackUrl })
-
     ensureLoopbackNoProxy()
     useEnvProxy()
 
-    logger.log("spawning sidecar", { url: loopbackUrl })
-    const { listener, health } = yield* Effect.promise(() =>
-      spawnLocalServer(hostname, port, username, password, {
-        userDataPath: app.getPath("userData"),
-        onStdout: (message) => writeLog("server", "stdout", { message }),
-        onStderr: (message) => writeLog("server", "stderr", { message }, "warn"),
-        onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
-      }),
-    )
-    server = listener
+    const spawnOptions = instanceLayout
+      ? {
+          userDataPath: app.getPath("userData"),
+          instanceDir: instanceLayout.instanceDir,
+          onStdout: (message: string) => writeLog("server", "stdout", { message }),
+          onStderr: (message: string) => writeLog("server", "stderr", { message }, "warn"),
+          onExit: (code: number) => writeLog("utility", "sidecar exited", { code }, "warn"),
+        }
+      : (() => {
+          const localServer = resolveLocalServerConfig(getStore())
+          return {
+            userDataPath: app.getPath("userData"),
+            hostname: hostnameForListen(localServer.listen),
+            port: localServer.port,
+            username: localServer.username,
+            password: localServer.password,
+            onStdout: (message: string) => writeLog("server", "stdout", { message }),
+            onStderr: (message: string) => writeLog("server", "stderr", { message }, "warn"),
+            onExit: (code: number) => writeLog("utility", "sidecar exited", { code }, "warn"),
+          }
+        })()
+
+    logger.log("spawning sidecar", {
+      instanceDir: instanceLayout?.instanceDir,
+      hostname: "hostname" in spawnOptions ? spawnOptions.hostname : undefined,
+      port: "port" in spawnOptions ? spawnOptions.port : undefined,
+    })
+    const spawned = yield* Effect.promise(() => spawnLocalServer(spawnOptions))
+    server = spawned.listener
     yield* Deferred.succeed(serverReady, {
-      url: loopbackUrl,
-      username,
-      password,
+      url: spawned.url,
+      username: spawned.username,
+      password: spawned.password,
     })
 
     if (process.platform === "win32") {
       void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
     }
 
-    yield* Effect.promise(() => health.wait).pipe(
+    yield* Effect.promise(() => spawned.health.wait).pipe(
       Effect.timeout("30 seconds"),
       Effect.catch((e) =>
         Effect.sync(() => {

@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Duration, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -30,6 +30,15 @@ import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { recordStep } from "@opencode-ai/usage-stats/service"
 
 const DOOM_LOOP_THRESHOLD = 3
+/** Handoff wait after stream drain for still-pending tools (not tool execute duration). */
+export function toolResultHandoffTimeoutMs(): number {
+  const raw = process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS
+  if (raw !== undefined && raw !== "") {
+    const ms = Number(raw)
+    if (Number.isFinite(ms) && ms >= 0) return Math.floor(ms)
+  }
+  return Duration.toMillis(LLM.LLM_STREAM_IDLE_TIMEOUT)
+}
 export type Result = "compact" | "stop" | "continue"
 
 export interface Handle {
@@ -65,6 +74,9 @@ type ToolCall = {
   messageID: SessionV1.ToolPart["messageID"]
   sessionID: SessionV1.ToolPart["sessionID"]
   done: Deferred.Deferred<void>
+  release: Effect.Effect<void>
+  /** Last tool input seen on tool-call (survives pending/running PartUpdated batch lag). */
+  lastInput?: Record<string, any>
 }
 
 interface ProcessorContext extends Input {
@@ -123,10 +135,20 @@ const layer = Layer.effect(
           aborted,
         })
 
+      const handoffDetails = (callID: string, tool?: string) => ({
+        sessionID: ctx.sessionID,
+        messageID: ctx.assistantMessage.id,
+        callID,
+        tool,
+        pendingToolCalls: Object.keys(ctx.toolcalls).length,
+      })
+
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
-        const done = ctx.toolcalls[toolCallID]?.done
+        const call = ctx.toolcalls[toolCallID]
         delete ctx.toolcalls[toolCallID]
-        if (done) yield* Deferred.succeed(done, undefined).pipe(Effect.ignore)
+        if (!call) return
+        yield* Deferred.succeed(call.done, undefined).pipe(Effect.ignore)
+        yield* call.release
       })
 
       const readToolCall = Effect.fn("SessionProcessor.readToolCall")(function* (toolCallID: string) {
@@ -138,11 +160,72 @@ const layer = Layer.effect(
           sessionID: call.sessionID,
         })
         if (!part || part.type !== "tool") {
-          delete ctx.toolcalls[toolCallID]
+          yield* settleToolCall(toolCallID)
           return undefined
         }
         return { call, part }
       })
+
+      /**
+       * Terminal tool-result/error must accept both pending and running.
+       * Running PartUpdated is last-wins batched (~100ms); tool-result can arrive
+       * before that flush, so getPart may still show pending.
+       */
+      const resolveOpenTool = Effect.fn("SessionProcessor.resolveOpenTool")(function* (
+        toolCallID: string,
+        eventType: string,
+        tool?: string,
+      ) {
+        const match = yield* readToolCall(toolCallID)
+        if (match) {
+          if (match.part.state.status === "running" || match.part.state.status === "pending") {
+            return { part: match.part, call: match.call, tracked: true as const }
+          }
+          // Already terminal but Deferred may still be held — release so cleanup cannot hang.
+          yield* settleToolCall(toolCallID)
+          return undefined
+        }
+        const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
+          Effect.provideService(Database.Service, database),
+        )
+        const part = parts.find(
+          (item): item is SessionV1.ToolPart =>
+            item.type === "tool" &&
+            item.callID === toolCallID &&
+            (item.state.status === "running" || item.state.status === "pending"),
+        )
+        if (!part) {
+          SessionDiagnostics.markToolHandoffUnmatched({
+            ...handoffDetails(toolCallID, tool),
+            eventType,
+          })
+          return undefined
+        }
+        SessionDiagnostics.markToolHandoff({
+          ...handoffDetails(toolCallID, tool ?? part.tool),
+          eventType,
+          phase: "recovered-from-parts",
+        })
+        return { part, call: undefined, tracked: false as const }
+      })
+
+      const openToolStart = (part: SessionV1.ToolPart) => {
+        if (part.state.status === "running") return part.state.time.start
+        return Date.now()
+      }
+
+      const openToolInput = (part: SessionV1.ToolPart, lastInput?: Record<string, any>): Record<string, any> => {
+        if (lastInput && Object.keys(lastInput).length > 0) return lastInput
+        if (part.state.status === "pending" || part.state.status === "running") {
+          return isRecord(part.state.input) ? part.state.input : {}
+        }
+        return {}
+      }
+
+      const openToolMetadata = (part: SessionV1.ToolPart): Record<string, unknown> => {
+        if ("metadata" in part.state && isRecord(part.state.metadata)) return part.state.metadata
+        return {}
+      }
 
       const updateToolCall = Effect.fn("SessionProcessor.updateToolCall")(function* (
         toolCallID: string,
@@ -151,11 +234,16 @@ const layer = Layer.effect(
         const match = yield* readToolCall(toolCallID)
         if (!match) return undefined
         const part = yield* session.updatePart(update(match.part))
+        const lastInput =
+          (part.state.status === "running" || part.state.status === "pending") && isRecord(part.state.input)
+            ? part.state.input
+            : match.call.lastInput
         ctx.toolcalls[toolCallID] = {
           ...match.call,
           partID: part.id,
           messageID: part.messageID,
           sessionID: part.sessionID,
+          lastInput,
         }
         return part
       })
@@ -169,41 +257,108 @@ const layer = Layer.effect(
           attachments?: SessionV1.FilePart[]
         },
       ) {
-        const match = yield* readToolCall(toolCallID)
-        if (!match || match.part.state.status !== "running") return
-        yield* session.updatePart({
-          ...match.part,
-          state: {
-            status: "completed",
-            input: match.part.state.input,
-            output: output.output,
-            metadata: output.metadata,
-            title: output.title,
-            time: { start: match.part.state.time.start, end: Date.now() },
-            attachments: output.attachments,
-          },
+        const resolved = yield* resolveOpenTool(toolCallID, "tool-result")
+        if (!resolved) return
+        const part = resolved.part
+        const start = openToolStart(part)
+        const input = openToolInput(part, resolved.call?.lastInput)
+        SessionDiagnostics.markToolHandoff({
+          ...handoffDetails(toolCallID, part.tool),
+          eventType: "tool-result",
+          phase: "persist-start",
         })
-        yield* settleToolCall(toolCallID)
+        yield* session
+          .updatePart({
+            ...part,
+            state: {
+              status: "completed",
+              input,
+              output: output.output,
+              metadata: output.metadata,
+              title: output.title,
+              time: { start, end: Date.now() },
+              attachments: output.attachments,
+            },
+          })
+          .pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                SessionDiagnostics.markToolHandoff({
+                  ...handoffDetails(toolCallID, part.tool),
+                  eventType: "tool-result",
+                  phase: "persist-end",
+                })
+              }),
+            ),
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                SessionDiagnostics.markToolHandoff({
+                  ...handoffDetails(toolCallID, part.tool),
+                  eventType: "tool-result",
+                  phase: "persist-error",
+                  error: errorMessage(error),
+                })
+              }),
+            ),
+            // Always release Deferred/blocker so cleanup cannot hang on persist failure.
+            Effect.ensuring(resolved.tracked ? settleToolCall(toolCallID) : Effect.void),
+          )
       })
 
-      const failToolCall = Effect.fn("SessionProcessor.failToolCall")(function* (toolCallID: string, error: unknown) {
-        const match = yield* readToolCall(toolCallID)
-        if (!match || match.part.state.status !== "running") return false
-        yield* session.updatePart({
-          ...match.part,
-          state: {
-            status: "error",
-            input: match.part.state.input,
-            error: errorMessage(error),
-            // Keep metadata streamed while running so failures retain progress detail (e.g. execute's child calls).
-            metadata: match.part.state.metadata,
-            time: { start: match.part.state.time.start, end: Date.now() },
-          },
+      const failToolCall = Effect.fn("SessionProcessor.failToolCall")(function* (
+        toolCallID: string,
+        error: unknown,
+        eventType = "tool-error",
+      ) {
+        const resolved = yield* resolveOpenTool(toolCallID, eventType)
+        if (!resolved) return false
+        const part = resolved.part
+        const start = openToolStart(part)
+        const input = openToolInput(part, resolved.call?.lastInput)
+        const metadata = openToolMetadata(part)
+        SessionDiagnostics.markToolHandoff({
+          ...handoffDetails(toolCallID, part.tool),
+          eventType,
+          phase: "persist-start",
+          error: errorMessage(error),
         })
+        yield* session
+          .updatePart({
+            ...part,
+            state: {
+              status: "error",
+              input,
+              error: errorMessage(error),
+              // Keep metadata streamed while running so failures retain progress detail (e.g. execute's child calls).
+              metadata,
+              time: { start, end: Date.now() },
+            },
+          })
+          .pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                SessionDiagnostics.markToolHandoff({
+                  ...handoffDetails(toolCallID, part.tool),
+                  eventType,
+                  phase: "persist-end",
+                })
+              }),
+            ),
+            Effect.tapError((err) =>
+              Effect.sync(() => {
+                SessionDiagnostics.markToolHandoff({
+                  ...handoffDetails(toolCallID, part.tool),
+                  eventType,
+                  phase: "persist-error",
+                  error: errorMessage(err),
+                })
+              }),
+            ),
+            Effect.ensuring(resolved.tracked ? settleToolCall(toolCallID) : Effect.void),
+          )
         if (error instanceof PermissionV1.RejectedError || error instanceof Question.RejectedError) {
           ctx.blocked = ctx.shouldBreak
         }
-        yield* settleToolCall(toolCallID)
         return true
       })
 
@@ -246,8 +401,10 @@ const layer = Layer.effect(
           state: { status: "pending", input: {}, raw: "" },
           metadata: input.providerExecuted ? { providerExecuted: true } : undefined,
         } satisfies SessionV1.ToolPart)
+        const release = yield* status.acquire(ctx.sessionID)
         ctx.toolcalls[input.id] = {
           done: yield* Deferred.make<void>(),
+          release,
           partID: part.id,
           messageID: part.messageID,
           sessionID: part.sessionID,
@@ -384,10 +541,13 @@ const layer = Layer.effect(
           }
 
           case "tool-result": {
-            const toolCall = yield* readToolCall(value.id)
-            if (!toolCall && value.result.type === "error") return
+            SessionDiagnostics.markToolHandoff({
+              ...handoffDetails(value.id, value.name),
+              eventType: "tool-result",
+              phase: "receive",
+            })
             if (value.result.type === "error") {
-              yield* failToolCall(value.id, value.result.value)
+              yield* failToolCall(value.id, value.result.value, "tool-result")
               return
             }
             const rawOutput = toolResultOutput(value)
@@ -417,7 +577,12 @@ const layer = Layer.effect(
           }
 
           case "tool-error": {
-            yield* failToolCall(value.id, value.error ?? new Error(value.message))
+            SessionDiagnostics.markToolHandoff({
+              ...handoffDetails(value.id, value.name),
+              eventType: "tool-error",
+              phase: "receive",
+            })
+            yield* failToolCall(value.id, value.error ?? new Error(value.message), "tool-error")
             return
           }
 
@@ -597,28 +762,80 @@ const layer = Layer.effect(
         }
         ctx.reasoningMap = {}
 
-        yield* Effect.forEach(
-          Object.values(ctx.toolcalls),
-          (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
-          { concurrency: "unbounded" },
-        )
+        // Normal turn: wait for tools to settle (upstream #27850 direction),
+        // but bound the post-stream handoff wait so a missing tool-result cannot hang forever.
+        // Explicit interrupt keeps the 250ms fast-abort path.
+        const cleanupDetails = SessionDiagnostics.streamDetails({
+          sessionID: ctx.sessionID,
+          messageID: ctx.assistantMessage.id,
+          providerID: ctx.model.providerID,
+          modelID: ctx.model.id,
+        })
+        if (!aborted) {
+          const pending = Object.keys(ctx.toolcalls).length
+          if (pending > 0) {
+            SessionDiagnostics.markStreamCleanupWait(cleanupDetails, pending)
+            const timeoutMs = toolResultHandoffTimeoutMs()
+            const timedOut = yield* Effect.forEach(Object.values(ctx.toolcalls), (call) => Deferred.await(call.done), {
+              concurrency: "unbounded",
+              discard: true,
+            }).pipe(
+              Effect.as(false),
+              Effect.timeoutOrElse({
+                duration: `${timeoutMs} millis`,
+                orElse: () => Effect.succeed(true),
+              }),
+            )
+            if (timedOut) {
+              const remaining = Object.keys(ctx.toolcalls).length
+              SessionDiagnostics.markStreamCleanupTimeout(cleanupDetails, remaining, timeoutMs)
+              for (const toolCallID of Object.keys(ctx.toolcalls)) {
+                const match = yield* readToolCall(toolCallID)
+                if (!match) continue
+                const part = match.part
+                const end = Date.now()
+                const metadata = openToolMetadata(part)
+                yield* session.updatePart({
+                  ...part,
+                  state: {
+                    status: "error",
+                    input: openToolInput(part, match.call.lastInput),
+                    error: "Tool result handoff timed out",
+                    metadata: { ...metadata, handoffTimeout: true, interrupted: false },
+                    time: { start: openToolStart(part), end },
+                  },
+                })
+                yield* settleToolCall(toolCallID)
+              }
+            }
+            SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, Object.keys(ctx.toolcalls).length, timedOut)
+          }
+        } else {
+          yield* Effect.forEach(
+            Object.values(ctx.toolcalls),
+            (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
+            { concurrency: "unbounded" },
+          )
 
-        for (const toolCallID of Object.keys(ctx.toolcalls)) {
-          const match = yield* readToolCall(toolCallID)
-          if (!match) continue
-          const part = match.part
-          const end = Date.now()
-          const metadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {}
-          yield* session.updatePart({
-            ...part,
-            state: {
-              ...part.state,
-              status: "error",
-              error: "Tool execution aborted",
-              metadata: { ...metadata, interrupted: true },
-              time: { start: "time" in part.state ? part.state.time.start : end, end },
-            },
-          })
+          for (const toolCallID of Object.keys(ctx.toolcalls)) {
+            const match = yield* readToolCall(toolCallID)
+            if (!match) continue
+            const part = match.part
+            const end = Date.now()
+            const metadata = openToolMetadata(part)
+            yield* session.updatePart({
+              ...part,
+              state: {
+                status: "error",
+                input: openToolInput(part, match.call.lastInput),
+                error: "Tool execution aborted",
+                metadata: { ...metadata, interrupted: true },
+                time: { start: openToolStart(part), end },
+              },
+            })
+            yield* settleToolCall(toolCallID)
+          }
+          SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, 0, false)
         }
         ctx.toolcalls = {}
         ctx.assistantMessage.time.completed = Date.now()

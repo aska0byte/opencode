@@ -140,15 +140,15 @@ export const PreferenceKeys = {
 export type OpenedProjectPref = { worktree: string; expanded: boolean }
 
 /**
- * Merge local + remote opened project lists for preference sync.
+ * Merge local + remote opened project lists (union).
  *
- * Restart recovery must not let a stale shorter remote snapshot erase local-only
- * opens. Local order wins for shared entries; remote-only entries are appended.
+ * **Not used for startup/live preference sync.** Server `opened_projects` is
+ * authoritative: clients replace local when the key exists (including `[]`) and
+ * only seed localStorage when the key is missing. These helpers remain for tests
+ * and any caller that still needs an explicit union.
+ *
+ * Local-first: local order wins for shared entries; remote-only entries append.
  * `pathKey` normalizes Windows path casing/trailing separators.
- *
- * Prefer `mergeOpenedProjectsRemoteFirst` on **startup** so clients that open the
- * same server via different hosts (localhost / 127.0.0.1 / LAN IP) share one
- * rail order from `/preference` instead of each origin's localStorage overwriting it.
  */
 export function mergeOpenedProjects(
   local: OpenedProjectPref[] | undefined,
@@ -159,8 +159,11 @@ export function mergeOpenedProjects(
 }
 
 /**
- * Startup merge: remote order wins for shared worktrees; local-only opens append.
+ * Remote-first union: remote order for shared worktrees; local-only opens append.
  * Expanded flags still prefer the local value when both sides have the entry.
+ *
+ * Prefer server replace for multi-client sync; union re-opens projects closed on
+ * the other side when localStorage is stale.
  */
 export function mergeOpenedProjectsRemoteFirst(
   local: OpenedProjectPref[] | undefined,
@@ -168,6 +171,21 @@ export function mergeOpenedProjectsRemoteFirst(
   normalize: (worktree: string) => string,
 ): OpenedProjectPref[] {
   return mergeOpenedProjectLists(local, remote, normalize, "remote")
+}
+
+/**
+ * Resolve opened projects for server-authoritative preference sync.
+ * - remote payload present (including empty array) → use remote
+ * - remote missing → keep local (caller may seed server)
+ */
+export function resolveOpenedProjectsFromRemote(
+  local: OpenedProjectPref[] | undefined,
+  remote: OpenedProjectPref[] | undefined | null,
+): { projects: OpenedProjectPref[]; source: "remote" | "local" } {
+  if (remote !== undefined && remote !== null) {
+    return { projects: normalizeOpenedProjects(remote), source: "remote" }
+  }
+  return { projects: local ? local.map((p) => ({ ...p })) : [], source: "local" }
 }
 
 function mergeOpenedProjectLists(

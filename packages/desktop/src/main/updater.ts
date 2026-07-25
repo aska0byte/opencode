@@ -4,10 +4,20 @@ import { UPDATER_ENABLED } from "./constants"
 import { createUpdaterController, type UpdaterReadyRecord } from "./updater-controller"
 import { getLogger } from "./logging"
 import { getStore } from "./store"
+import { UPDATER_CHECK_ON_STARTUP_KEY } from "./store-keys"
 import { setAppQuitting } from "./windows"
 
 const { autoUpdater } = pkg
 const key = "ready"
+
+/** Default true when unset — matches “check on startup” product default. */
+export function getUpdaterCheckOnStartup(): boolean {
+  return getStore().get(UPDATER_CHECK_ON_STARTUP_KEY) !== false
+}
+
+export function setUpdaterCheckOnStartup(enabled: boolean): void {
+  getStore().set(UPDATER_CHECK_ON_STARTUP_KEY, enabled)
+}
 
 export function setupAutoUpdater(stop: () => Promise<void>) {
   const logger = getLogger()

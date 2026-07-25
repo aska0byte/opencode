@@ -82,6 +82,12 @@ type PlatformBase = {
   /** Set the default server URL to use on app startup (platform-specific) */
   setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
 
+  /** Local server listen config (port / auth / bind); desktop IPC or web HTTP */
+  getLocalServerConfig?(): Promise<LocalServerConfig>
+
+  /** Persist local server listen config (takes effect after process restart) */
+  setLocalServerConfig?(config: LocalServerConfig): Promise<LocalServerConfig>
+
   /** Manage WSL sidecar servers (Electron on Windows only) */
   wslServers?: WslServersPlatform
 
@@ -102,6 +108,12 @@ type PlatformBase = {
 
   /** Allow native pinch/Ctrl-scroll zoom gestures (desktop only) */
   setPinchZoomEnabled?(enabled: boolean): Promise<void> | void
+
+  /** Whether desktop checks for updates on app startup (default true) */
+  getUpdaterCheckOnStartup?(): Promise<boolean> | boolean
+
+  /** Persist desktop “check for updates on startup” preference */
+  setUpdaterCheckOnStartup?(enabled: boolean): Promise<void> | void
 
   /** Run a desktop-only menu action from the app chrome */
   runDesktopMenuAction?(action: DesktopMenuAction): Promise<void> | void
@@ -133,6 +145,15 @@ export type Platform = PlatformBase &
   )
 
 export type DisplayBackend = "auto" | "wayland"
+
+export type LocalServerListen = "local" | "global"
+
+export type LocalServerConfig = {
+  readonly port: number
+  readonly listen: LocalServerListen
+  readonly username: string
+  readonly password: string
+}
 
 export const { use: usePlatform, provider: PlatformProvider } = createSimpleContext({
   name: "Platform",

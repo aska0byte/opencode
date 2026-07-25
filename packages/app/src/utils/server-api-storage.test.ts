@@ -5,7 +5,7 @@ import {
   mergeOpenedProjectsRemoteFirst,
   normalizeOpenedProjects,
   openedProjectsEqual,
-  type PreferencePush,
+  resolveOpenedProjectsFromRemote,
 } from "./server-api-storage"
 
 function deferred<T = void>() {
@@ -170,6 +170,44 @@ describe("mergeOpenedProjectsRemoteFirst", () => {
       { worktree: "/b", expanded: true },
       { worktree: "/c", expanded: false },
     ])
+  })
+})
+
+describe("resolveOpenedProjectsFromRemote", () => {
+  test("uses remote when present including empty list", () => {
+    const local = [
+      { worktree: "/a", expanded: true },
+      { worktree: "/b", expanded: false },
+    ]
+    expect(resolveOpenedProjectsFromRemote(local, [])).toEqual({ projects: [], source: "remote" })
+    expect(resolveOpenedProjectsFromRemote(local, [{ worktree: "/a", expanded: true }])).toEqual({
+      projects: [{ worktree: "/a", expanded: true }],
+      source: "remote",
+    })
+  })
+
+  test("keeps local when remote key is missing", () => {
+    const local = [{ worktree: "/a", expanded: true }]
+    expect(resolveOpenedProjectsFromRemote(local, undefined)).toEqual({
+      projects: [{ worktree: "/a", expanded: true }],
+      source: "local",
+    })
+    expect(resolveOpenedProjectsFromRemote(local, null)).toEqual({
+      projects: [{ worktree: "/a", expanded: true }],
+      source: "local",
+    })
+  })
+
+  test("does not union local-only opens into remote snapshot", () => {
+    const local = [
+      { worktree: "/a", expanded: true },
+      { worktree: "/closed", expanded: true },
+    ]
+    const remote = [{ worktree: "/a", expanded: false }]
+    expect(resolveOpenedProjectsFromRemote(local, remote)).toEqual({
+      projects: [{ worktree: "/a", expanded: false }],
+      source: "remote",
+    })
   })
 })
 

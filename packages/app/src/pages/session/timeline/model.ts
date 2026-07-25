@@ -48,14 +48,20 @@ export function clearForceSessionSync(sessionID?: string) {
   }
 }
 
-/** Whether timeline hydrate should force-reload messages instead of soft cache hit. */
+/**
+ * Whether timeline hydrate should force-reload messages instead of soft cache hit.
+ *
+ * Soft `session.sync` early-returns when cache exists. After project remount
+ * `previousSessionID` is reset so `switched` alone is not enough — force whenever
+ * any messages are already in the store. Cold open (no cache) stays soft.
+ */
 export function shouldForceSessionTimelineSync(input: {
   cached: boolean
-  stale: boolean
-  busy: boolean
-  switched: boolean
+  stale?: boolean
+  busy?: boolean
+  switched?: boolean
 }) {
-  return input.cached && (input.stale || input.busy || input.switched)
+  return input.cached
 }
 
 export function isBusySessionStatus(type: string | undefined) {
@@ -92,7 +98,7 @@ export function createTimelineModel(input: {
       const stale = cached && !serverSync().session.fresh(id, sessionFreshness)
       const force = shouldForceSessionTimelineSync({ cached, stale, busy, switched })
 
-      // Debounced force only as a fallback when we did not force immediately.
+      // Debounced force is unused when we always force warm cache; keep for cold+stale races.
       if (stale && !force) {
         refreshFrame = requestAnimationFrame(() => {
           refreshFrame = undefined

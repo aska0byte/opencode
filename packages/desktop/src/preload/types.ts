@@ -21,6 +21,15 @@ export type ServerReadyData = {
   password: string | null
 }
 
+export type LocalServerListen = "local" | "global"
+
+export type LocalServerConfig = {
+  readonly port: number
+  readonly listen: LocalServerListen
+  readonly username: string
+  readonly password: string
+}
+
 export type WslServersAPI = WslServersPlatform
 export type UpdaterAPI = {
   subscribe: (cb: (state: UpdaterState) => void) => Promise<() => void>
@@ -50,6 +59,8 @@ export type ElectronAPI = {
   consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
+  getLocalServerConfig: () => Promise<LocalServerConfig>
+  setLocalServerConfig: (config: LocalServerConfig) => Promise<LocalServerConfig>
   isFirstLaunchOnboardingPending: () => Promise<boolean>
   finishFirstLaunchOnboarding: (createDefaultProject: boolean) => Promise<string | null>
   isOldLayoutEligible: () => Promise<boolean>
@@ -98,6 +109,8 @@ export type ElectronAPI = {
   setZoomFactor: (factor: number) => Promise<void>
   getPinchZoomEnabled: () => Promise<boolean>
   setPinchZoomEnabled: (enabled: boolean) => Promise<void>
+  getUpdaterCheckOnStartup: () => Promise<boolean>
+  setUpdaterCheckOnStartup: (enabled: boolean) => Promise<void>
   onPinchZoomEnabledChanged: (cb: (enabled: boolean) => void) => () => void
   onZoomFactorChanged: (cb: (factor: number) => void) => () => void
   setTitlebar: (theme: TitlebarTheme) => Promise<void>

@@ -1,0 +1,16 @@
+{
+  "name": "@opencode-ai/session-storage",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts",
+    "./sessions-tab": "./src/sessions-tab.tsx"
+  },
+  "dependencies": {
+    "@opencode-ai/core": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "solid-js": "*"
+  }
+}

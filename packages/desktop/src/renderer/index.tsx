@@ -280,6 +280,9 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
       await window.api.setDefaultServerUrl(url)
     },
 
+    // Desktop settings always go through sidecar HTTP /global/local-server so
+    // portable instance mode can write instance.config and normal mode writes
+    // local-server.json. Do not inject Electron-store IPC here.
     wslServers: wslServersApi,
 
     getDisplayBackend: async () => {
@@ -297,6 +300,10 @@ const createPlatform = (windowState: DesktopWindowState): Platform => {
     getPinchZoomEnabled: () => window.api.getPinchZoomEnabled(),
 
     setPinchZoomEnabled,
+
+    getUpdaterCheckOnStartup: () => window.api.getUpdaterCheckOnStartup(),
+
+    setUpdaterCheckOnStartup: (enabled) => window.api.setUpdaterCheckOnStartup(enabled),
 
     runDesktopMenuAction,
 

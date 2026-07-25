@@ -6,7 +6,9 @@ type SortDir = "asc" | "desc"
 type Row = {
   date: string
   project_id: string
+  /** Display label (already resolved server-side). */
   project_worktree: string
+  project_path?: string
   model_id: string
   call_count: number
   tokens_in: number
@@ -50,11 +52,16 @@ function fmtCompact(n: number): string {
   return n.toString()
 }
 
-function showPath(p: string | null | undefined): string {
-  if (!p) return ""
-  const parts = p.replace(/\\/g, "/").split("/").filter(Boolean)
-  if (parts.length === 0) return ""
-  return parts[parts.length - 1]!
+/** Prefer server-resolved label; never show blank when project_id exists. */
+function showProject(row: Row): string {
+  const label = row.project_worktree?.trim()
+  if (label) return label
+  if (row.project_id) return row.project_id.slice(0, 12)
+  return "（无项目）"
+}
+
+function projectTitle(row: Row): string {
+  return row.project_path?.trim() || showProject(row)
 }
 
 export const UsageStatsTab: Component<{ serverUrl?: string }> = (props) => {
@@ -250,7 +257,7 @@ export const UsageStatsTab: Component<{ serverUrl?: string }> = (props) => {
             <For each={sorted()}>
               {(row) => (
                 <tr class="border-b border-border-primary hover:bg-surface-secondary">
-                  <td class="py-1.5 px-2 font-mono text-12-regular text-text-strong truncate max-w-[200px]" title={row.project_worktree}>{showPath(row.project_worktree)}</td>
+                  <td class="py-1.5 px-2 font-mono text-12-regular text-text-strong truncate max-w-[200px]" title={projectTitle(row)}>{showProject(row)}</td>
                   <td class="py-1.5 px-2 text-text-strong">{row.model_id}</td>
                   <td class="py-1.5 px-2 text-right text-text-strong">{fmt(row.call_count)}</td>
                   <td class="py-1.5 px-2 text-right text-text-strong" title={`输入: ${fmt(row.tokens_in - row.tokens_cache_read - row.tokens_cache_write)}\n缓存读取: ${fmt(row.tokens_cache_read)}\n缓存写入: ${fmt(row.tokens_cache_write)}`}>

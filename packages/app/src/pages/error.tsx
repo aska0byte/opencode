@@ -14,6 +14,8 @@ export type InitError = {
   data: Record<string, unknown>
 }
 
+export { recoverFromRendererError } from "./error-recover"
+
 type Translator = ReturnType<typeof useLanguage>["t"]
 const CHAIN_SEPARATOR = "\n" + "─".repeat(40) + "\n"
 

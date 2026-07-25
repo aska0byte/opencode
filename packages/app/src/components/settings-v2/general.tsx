@@ -1,4 +1,4 @@
-import { Component, Show, createMemo, createResource, createSignal, onMount } from "solid-js"
+import { Component, Show, createMemo, createResource, onMount } from "solid-js"
 import { createMediaQuery } from "@solid-primitives/media"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
@@ -119,25 +119,6 @@ export const SettingsGeneralV2: Component<{
   }
   const desktop = createMemo(() => platform.platform === "desktop")
 
-  const [serverPort, setServerPort] = createSignal("4096")
-  const [serverUsername, setServerUsername] = createSignal("opencode")
-  const [serverPassword, setServerPassword] = createSignal("yiyisoftware")
-  const [showPassword, setShowPassword] = createSignal(false)
-
-  onMount(async () => {
-    const SETTINGS_STORE = "opencode.settings"
-    try {
-      const [port, username, password] = await Promise.all([
-        window.api?.storeGet?.(SETTINGS_STORE, "serverPort") ?? Promise.resolve(null),
-        window.api?.storeGet?.(SETTINGS_STORE, "serverUsername") ?? Promise.resolve(null),
-        window.api?.storeGet?.(SETTINGS_STORE, "serverPassword") ?? Promise.resolve(null),
-      ])
-      if (port) setServerPort(port)
-      if (username) setServerUsername(username)
-      if (password) setServerPassword(password)
-    } catch {}
-  })
-
   const themeOptions = createMemo<ThemeOption[]>(() => theme.ids().map((id) => ({ id, name: theme.name(id) })))
 
   const [shells] = createResource(
@@ -153,6 +134,12 @@ export const SettingsGeneralV2: Component<{
     () => (desktop() && platform.getPinchZoomEnabled ? true : false),
     () => Promise.resolve(platform.getPinchZoomEnabled?.() ?? false).catch(() => false),
     { initialValue: false },
+  )
+
+  const [checkUpdatesOnStartup, { mutate: setCheckUpdatesOnStartup }] = createResource(
+    () => (desktop() && platform.getUpdaterCheckOnStartup ? true : false),
+    () => Promise.resolve(platform.getUpdaterCheckOnStartup?.() ?? true).catch(() => true),
+    { initialValue: true },
   )
 
   onMount(() => {
@@ -198,6 +185,13 @@ export const SettingsGeneralV2: Component<{
     const update = platform.setPinchZoomEnabled?.(checked)
     if (!update) return
     void update.catch(() => setPinchZoom(!checked))
+  }
+
+  const onCheckUpdatesOnStartupChange = (checked: boolean) => {
+    setCheckUpdatesOnStartup(checked)
+    const update = platform.setUpdaterCheckOnStartup?.(checked)
+    if (!update) return
+    void Promise.resolve(update).catch(() => setCheckUpdatesOnStartup(!checked))
   }
 
   const colorSchemeOptions = createMemo((): { value: ColorScheme; label: string }[] => [
@@ -671,6 +665,17 @@ export const SettingsGeneralV2: Component<{
           </div>
         </SettingsRowV2>
 
+        <Show when={desktop() && platform.getUpdaterCheckOnStartup && platform.setUpdaterCheckOnStartup}>
+          <SettingsRowV2
+            title={language.t("settings.updates.row.startup.title")}
+            description={language.t("settings.updates.row.startup.description")}
+          >
+            <div data-action="settings-check-updates-on-startup">
+              <Switch checked={checkUpdatesOnStartup.latest} onChange={onCheckUpdatesOnStartupChange} />
+            </div>
+          </SettingsRowV2>
+        </Show>
+
         <SettingsRowV2
           title={language.t("settings.updates.row.check.title")}
           description={language.t("settings.updates.row.check.description")}
@@ -698,104 +703,6 @@ export const SettingsGeneralV2: Component<{
               <Switch checked={pinchZoom.latest} onChange={onPinchZoomChange} />
             </div>
           </SettingsRowV2>
-        </SettingsListV2>
-      </div>
-    </Show>
-  )
-
-  const ServerSection = () => (
-    <Show when={desktop()}>
-      <div class="settings-v2-section">
-        <h3 class="settings-v2-section-title">{language.t("settings.general.section.server")}</h3>
-
-        <SettingsListV2>
-          <SettingsRowV2
-            title={language.t("settings.general.row.serverPort.title")}
-            description={language.t("settings.general.row.serverPort.description")}
-          >
-            <div class="w-full sm:w-[180px]">
-              <TextInputV2
-                data-action="settings-server-port"
-                type="number"
-                appearance="base"
-                value={serverPort()}
-                onInput={(e) => {
-                  const val = e.currentTarget.value
-                  setServerPort(val)
-                  void window.api?.storeSet?.("opencode.settings", "serverPort", val)
-                }}
-                min="1"
-                max="65535"
-                aria-label={language.t("settings.general.row.serverPort.title")}
-              />
-            </div>
-          </SettingsRowV2>
-
-          <SettingsRowV2
-            title={language.t("settings.general.row.serverUsername.title")}
-            description={language.t("settings.general.row.serverUsername.description")}
-          >
-            <div class="w-full sm:w-[180px]">
-              <TextInputV2
-                data-action="settings-server-username"
-                type="text"
-                appearance="base"
-                value={serverUsername()}
-                onInput={(e) => {
-                  const val = e.currentTarget.value
-                  setServerUsername(val)
-                  void window.api?.storeSet?.("opencode.settings", "serverUsername", val)
-                }}
-                aria-label={language.t("settings.general.row.serverUsername.title")}
-              />
-            </div>
-          </SettingsRowV2>
-
-          <SettingsRowV2
-            title={language.t("settings.general.row.serverPassword.title")}
-            description={language.t("settings.general.row.serverPassword.description")}
-          >
-            <div class="w-full sm:w-[180px] flex items-center gap-1">
-              <TextInputV2
-                data-action="settings-server-password"
-                type={showPassword() ? "text" : "password"}
-                appearance="base"
-                value={serverPassword()}
-                onInput={(e) => {
-                  const val = e.currentTarget.value
-                  setServerPassword(val)
-                  void window.api?.storeSet?.("opencode.settings", "serverPassword", val)
-                }}
-                aria-label={language.t("settings.general.row.serverPassword.title")}
-                class="flex-1"
-              />
-              <button
-                class="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
-                onClick={() => setShowPassword(!showPassword())}
-                aria-label={showPassword() ? "Hide password" : "Show password"}
-              >
-                <Show
-                  when={showPassword()}
-                  fallback={
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 3C4.5 3 1.5 5.5 0.5 8c1 2.5 4 5 7.5 5s6.5-2.5 7.5-5c-1-2.5-4-5-7.5-5zm0 8a3 3 0 110-6 3 3 0 010 6z" />
-                    </svg>
-                  }
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 3C4.5 3 1.5 5.5 0.5 8c1 2.5 4 5 7.5 5s6.5-2.5 7.5-5c-1-2.5-4-5-7.5-5zm0 8a3 3 0 110-6 3 3 0 010 6zM2.5 8c.8-1.8 2.5-3.5 5.5-3.5s4.7 1.7 5.5 3.5c-.8 1.8-2.5 3.5-5.5 3.5S3.3 9.8 2.5 8z" />
-                  </svg>
-                </Show>
-              </button>
-            </div>
-          </SettingsRowV2>
-
-          <p
-            class="text-xs mt-2"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            {language.t("settings.general.row.serverRestart.note")}
-          </p>
         </SettingsListV2>
       </div>
     </Show>
@@ -829,8 +736,6 @@ export const SettingsGeneralV2: Component<{
         </Show>
 
         <DisplaySection />
-
-        <ServerSection />
 
         <AdvancedSection />
       </div>

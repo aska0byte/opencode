@@ -25,11 +25,42 @@ import { Auth } from "@/auth"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { SidecarDiagnostics } from "@/diagnostics/sidecar"
+import { SessionDiagnostics } from "@/diagnostics/session"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
 import { LLMRequestPrep } from "./llm/request"
+
+function markToolStreamEvent(
+  runtime: "ai-sdk" | "native" | "normalized",
+  sessionID: string,
+  messageID: string,
+  event: { readonly type: string },
+): void {
+  if (event.type !== "tool-call" && event.type !== "tool-result" && event.type !== "tool-error") return
+  const record = event as {
+    readonly type: string
+    readonly toolCallId?: string
+    readonly id?: string
+    readonly toolName?: string
+    readonly name?: string
+  }
+  const callID =
+    typeof record.toolCallId === "string"
+      ? record.toolCallId
+      : typeof record.id === "string"
+        ? record.id
+        : null
+  SessionDiagnostics.markLlmToolEvent({
+    sessionID,
+    messageID,
+    runtime,
+    eventType: event.type,
+    callID,
+    tool: typeof record.toolName === "string" ? record.toolName : typeof record.name === "string" ? record.name : undefined,
+  })
+}
 
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 export const LLM_STREAM_IDLE_TIMEOUT = Duration.seconds(180)
@@ -382,8 +413,16 @@ const live: Layer.Layer<
             )
 
             const result = yield* run({ ...input, abort: ctrl.signal })
+            const messageID = input.user.id
 
-            if (result.type === "native") return result.stream.pipe(Stream.timeout(LLM_STREAM_IDLE_TIMEOUT))
+            if (result.type === "native") {
+              return result.stream.pipe(
+                Stream.tap((event) =>
+                  Effect.sync(() => markToolStreamEvent("native", input.sessionID, messageID, event)),
+                ),
+                Stream.timeout(LLM_STREAM_IDLE_TIMEOUT),
+              )
+            }
 
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
             // already returns one; AI SDK streams are converted here.
@@ -392,8 +431,14 @@ const live: Layer.Layer<
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
               Stream.timeout(LLM_STREAM_IDLE_TIMEOUT),
+              Stream.tap((event) =>
+                Effect.sync(() => markToolStreamEvent("ai-sdk", input.sessionID, messageID, event)),
+              ),
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
+              Stream.tap((event) =>
+                Effect.sync(() => markToolStreamEvent("normalized", input.sessionID, messageID, event)),
+              ),
             )
           }),
         ),

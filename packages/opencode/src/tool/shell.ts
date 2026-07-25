@@ -20,7 +20,7 @@ import { Plugin } from "@/plugin"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
-import { killProcessTree } from "./shell/process-tree"
+import { killProcessTree, KILL_SHELL_DEADLINE_MS } from "./shell/process-tree"
 import { BashArity } from "@/permission/arity"
 import { SessionDiagnostics } from "@/diagnostics/session"
 
@@ -437,28 +437,49 @@ export const ShellTool = Tool.define(
     ) =>
       Effect.gen(function* () {
         SessionDiagnostics.markShellKillStart(details, reason)
-        const first = yield* handle.kill({ forceKillAfter: 3_000 }).pipe(Effect.exit)
-        if (Exit.isSuccess(first)) {
-          SessionDiagnostics.markShellKillEnd(details, reason)
-          return
-        }
-        const error = Cause.squash(first.cause)
-        SessionDiagnostics.markShellKillError(details, reason, error)
+        // forceKillAfter only escalates the signal; handle.kill can still hang on
+        // Deferred.await(exit). Bound the whole sequence, and always tree-kill on hang/failure.
+        const attempt = Effect.gen(function* () {
+          const first = yield* handle.kill({ forceKillAfter: 3_000 }).pipe(Effect.exit)
+          if (Exit.isSuccess(first)) return
 
-        const pid = Number(handle.pid)
-        SessionDiagnostics.markShellKillTreeStart(details, reason, pid)
-        const tree = yield* killProcessTree(pid)
-        SessionDiagnostics.markShellKillTreeEnd(details, reason, tree)
-        if (!tree.ok) {
-          // Best-effort only: never fail the shell tool solely because kill failed.
-          // The process may already be gone, or OS may still reclaim it.
-          yield* Effect.logWarning("shell process tree kill incomplete", {
+          const error = Cause.squash(first.cause)
+          SessionDiagnostics.markShellKillError(details, reason, error)
+
+          const pid = Number(handle.pid)
+          SessionDiagnostics.markShellKillTreeStart(details, reason, pid)
+          const tree = yield* killProcessTree(pid)
+          SessionDiagnostics.markShellKillTreeEnd(details, reason, tree)
+          if (!tree.ok) {
+            // Best-effort only: never fail the shell tool solely because kill failed.
+            yield* Effect.logWarning("shell process tree kill incomplete", {
+              reason,
+              pid,
+              method: tree.method,
+              error: tree.error,
+            })
+          }
+        }).pipe(Effect.catch(() => Effect.void))
+
+        const onDeadline = Effect.gen(function* () {
+          yield* Effect.sleep(KILL_SHELL_DEADLINE_MS)
+          const pid = Number(handle.pid)
+          SessionDiagnostics.markShellKillTreeStart(details, reason, pid)
+          const tree = yield* killProcessTree(pid)
+          SessionDiagnostics.markShellKillTreeEnd(details, reason, tree)
+          yield* Effect.logWarning("shell kill deadline exceeded", {
             reason,
             pid,
+            deadlineMs: KILL_SHELL_DEADLINE_MS,
             method: tree.method,
+            ok: tree.ok,
             error: tree.error,
           })
-        }
+        })
+
+        // Effect.timeoutOrElse is unavailable on this Effect version; race the deadline fiber.
+        yield* Effect.raceFirst(attempt, onDeadline)
+        SessionDiagnostics.markShellKillEnd(details, reason)
       })
 
     const run = Effect.fn("ShellTool.run")(function* (

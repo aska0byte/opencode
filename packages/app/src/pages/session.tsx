@@ -180,26 +180,65 @@ export function SessionRouteErrorBoundary(
   props: ParentProps<{ sessionID?: string; serverKey?: ServerConnection.Key; padded?: boolean }>,
 ) {
   const settings = useSettings()
+  const navigate = useNavigate()
+  // Same server keeps this boundary mounted across session tabs (workspace state).
+  // Solid ErrorBoundary stays in fallback until reset — must clear on identity change.
+  let resetBoundary: (() => void) | undefined
+  let seenRouteKey: string | undefined
+
+  createEffect(
+    on(
+      () => `${props.serverKey ?? ""}\0${props.sessionID ?? ""}`,
+      (key) => {
+        if (seenRouteKey === undefined) {
+          seenRouteKey = key
+          return
+        }
+        if (seenRouteKey === key) return
+        seenRouteKey = key
+        resetBoundary?.()
+      },
+    ),
+  )
+
+  const dismissError = (reset: () => void) => {
+    // Leave the crashed route first so reset does not re-render the same broken session.
+    navigate("/", { replace: true })
+    reset()
+  }
+
   return (
     <ErrorBoundary
-      fallback={(error) =>
-        settings.general.newLayoutDesigns() ? (
-          <SessionRouteFrame padded={props.padded}>
-            <SessionPanelFrame newLayout raised={!!props.sessionID}>
-              <SessionErrorFallback error={error} sessionID={props.sessionID} serverKey={props.serverKey} />
-            </SessionPanelFrame>
-          </SessionRouteFrame>
-        ) : (
-          <ErrorPage error={error} />
-        )
-      }
+      fallback={(error, reset) => {
+        resetBoundary = reset
+        if (settings.general.newLayoutDesigns()) {
+          return (
+            <SessionRouteFrame padded={props.padded}>
+              <SessionPanelFrame newLayout raised={!!props.sessionID}>
+                <SessionErrorFallback
+                  error={error}
+                  sessionID={props.sessionID}
+                  serverKey={props.serverKey}
+                  onDismiss={() => dismissError(reset)}
+                />
+              </SessionPanelFrame>
+            </SessionRouteFrame>
+          )
+        }
+        return <ErrorPage error={error} onDismiss={() => dismissError(reset)} />
+      }}
     >
       {props.children}
     </ErrorBoundary>
   )
 }
 
-function SessionErrorFallback(props: { error: unknown; sessionID?: string; serverKey?: ServerConnection.Key }) {
+function SessionErrorFallback(props: {
+  error: unknown
+  sessionID?: string
+  serverKey?: ServerConnection.Key
+  onDismiss?: () => void
+}) {
   const language = useLanguage()
   const server = useServer()
   const tabs = useTabs()
@@ -239,7 +278,7 @@ function SessionErrorFallback(props: { error: unknown; sessionID?: string; serve
       </div>
     )
   }
-  return <ErrorPage error={props.error} />
+  return <ErrorPage error={props.error} onDismiss={props.onDismiss} />
 }
 
 function ResolvedTargetSessionRoute() {

@@ -174,6 +174,92 @@ export class SessionDiagnostics {
     })
   }
 
+  /**
+   * Tool-result handoff marks — never include tool input/output body.
+   * Used to distinguish: execute ended without raw result, raw result lost in processor,
+   * or processor received result but terminal persistence failed.
+   */
+  static markToolHandoff(input: {
+    readonly sessionID: string
+    readonly messageID: string
+    readonly callID: string
+    readonly tool?: string
+    readonly eventType: string
+    readonly phase: string
+    readonly pendingToolCalls?: number
+    readonly error?: string
+  }): void {
+    SidecarDiagnostics.mark("SessionProcessor.tool.handoff", {
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      callID: input.callID,
+      tool: input.tool ?? null,
+      eventType: input.eventType,
+      phase: input.phase,
+      pendingToolCalls: input.pendingToolCalls ?? null,
+      error: input.error ?? null,
+    })
+  }
+
+  static markToolHandoffUnmatched(input: {
+    readonly sessionID: string
+    readonly messageID: string
+    readonly callID: string
+    readonly tool?: string
+    readonly eventType: string
+    readonly pendingToolCalls?: number
+  }): void {
+    SidecarDiagnostics.mark("SessionProcessor.tool.handoff.unmatched", {
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      callID: input.callID,
+      tool: input.tool ?? null,
+      eventType: input.eventType,
+      pendingToolCalls: input.pendingToolCalls ?? null,
+    })
+  }
+
+  static markStreamCleanupWait(details: Details, pendingToolCalls: number): void {
+    SidecarDiagnostics.mark("SessionProcessor.stream.cleanup.wait", {
+      ...details,
+      pendingToolCalls,
+    })
+  }
+
+  static markStreamCleanupTimeout(details: Details, pendingToolCalls: number, timeoutMs: number): void {
+    SidecarDiagnostics.mark("SessionProcessor.stream.cleanup.timeout", {
+      ...details,
+      pendingToolCalls,
+      timeoutMs,
+    })
+  }
+
+  static markStreamCleanupEnd(details: Details, pendingToolCalls: number, timedOut: boolean): void {
+    SidecarDiagnostics.mark("SessionProcessor.stream.cleanup.end", {
+      ...details,
+      pendingToolCalls,
+      timedOut,
+    })
+  }
+
+  static markLlmToolEvent(input: {
+    readonly sessionID: string
+    readonly messageID: string
+    readonly runtime: "ai-sdk" | "native" | "normalized"
+    readonly eventType: string
+    readonly callID: string | null
+    readonly tool?: string
+  }): void {
+    SidecarDiagnostics.mark("LLM.tool.event", {
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      runtime: input.runtime,
+      eventType: input.eventType,
+      callID: input.callID,
+      tool: input.tool ?? null,
+    })
+  }
+
   static eventType(event: LLMEvent): string {
     return llmEventType(event)
   }

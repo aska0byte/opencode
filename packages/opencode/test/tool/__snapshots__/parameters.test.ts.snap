@@ -322,7 +322,7 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
       "type": "string",
     },
     "task_id": {
-      "description": "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
+      "description": "Resume a previous task by its subagent session id (must start with ses_). Do not pass background job UUIDs from call_omo/background_output — those are not session ids.",
       "type": "string",
     },
   },

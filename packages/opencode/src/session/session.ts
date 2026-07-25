@@ -13,6 +13,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { SidecarDiagnostics } from "@/diagnostics/sidecar"
 import { SessionProgress } from "@/diagnostics/session-progress"
 import { PartDeltaBatcher } from "@/diagnostics/part-delta-batcher"
+import { PartUpdatedBatcher } from "@/diagnostics/part-updated-batcher"
 import { SessionV2 } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
 import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
@@ -660,6 +661,8 @@ const layer: Layer.Layer<
       Effect.gen(function* () {
         bumpMessagesGeneration(msg.sessionID)
         yield* events.publish(SessionV1.Event.MessageUpdated, { sessionID: msg.sessionID, info: msg })
+        // Yield so long tool/stream chains cannot starve the event loop after durable writes.
+        yield* Effect.yieldNow
         return msg
       }).pipe(Effect.withSpan("Session.updateMessage"))
 
@@ -673,16 +676,22 @@ const layer: Layer.Layer<
       }),
     )
 
+    const partUpdatedBatcher = new PartUpdatedBatcher<SessionV1.Part>((input) =>
+      events.publish(SessionV1.Event.PartUpdated, {
+        sessionID: input.part.sessionID,
+        part: input.part,
+        time: input.time,
+      }),
+    )
+
     const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
       Effect.gen(function* () {
         bumpMessagesGeneration(part.sessionID)
         // Flush coalesced deltas before the authoritative full part snapshot.
         yield* deltaBatcher.flushPart(part.sessionID, part.messageID, part.id)
-        yield* events.publish(SessionV1.Event.PartUpdated, {
-          sessionID: part.sessionID,
-          part: structuredClone(part),
-          time: Date.now(),
-        })
+        // Running tool metadata is last-wins batched (~100ms); terminal status is immediate.
+        yield* partUpdatedBatcher.publishPart(part)
+        yield* Effect.yieldNow
         return part
       }).pipe(Effect.withSpan("Session.updatePart"))
 

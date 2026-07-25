@@ -46,13 +46,16 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import {
   closeHomeProject,
+  countProjectWorkingSessions,
   displayName,
   errorMessage,
   getProjectAvatarSource,
   homeProjectDirectories,
   projectForSession,
+  projectWorkspaceDirectories,
   toggleHomeProjectSelection,
 } from "@/pages/layout/helpers"
+import { Dialog } from "@opencode-ai/ui/dialog"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { sessionTitle } from "@/utils/session-title"
 import { pathKey } from "@/utils/path-key"
@@ -454,6 +457,76 @@ export function NewHome() {
     layout.home.setSelection(next)
   }
 
+  async function disposeHomeProjectInstances(conn: ServerConnection.Any, project: LocalProject) {
+    const ctx = global.ensureServerCtx(conn)
+    const directories = projectWorkspaceDirectories(project)
+    for (const directory of directories) {
+      ctx.sync.disposeDirectory(directory, { force: true })
+    }
+    await Promise.all(
+      directories.map((directory) => ctx.sdk.client.instance.dispose({ directory }).catch(() => undefined)),
+    )
+  }
+
+  function performCloseHomeProject(conn: ServerConnection.Any, directory: string) {
+    const ctx = global.ensureServerCtx(conn)
+    const project =
+      ctx.projects.list().find((item) => pathKey(item.worktree) === pathKey(directory)) ??
+      ({ worktree: directory, expanded: false } as LocalProject)
+    const next = closeHomeProject(selection(), ServerConnection.key(conn), ctx.projects, directory)
+    if (next) setSelection(next)
+    void disposeHomeProjectInstances(conn, project)
+  }
+
+  function closeHomeProjectWithDispose(conn: ServerConnection.Any, directory: string) {
+    const ctx = global.ensureServerCtx(conn)
+    const project =
+      ctx.projects.list().find((item) => pathKey(item.worktree) === pathKey(directory)) ??
+      ({ worktree: directory, expanded: false } as LocalProject)
+    const working = countProjectWorkingSessions({
+      directories: projectWorkspaceDirectories(project),
+      sessionIDs: Object.keys(ctx.sync.session.data.session_status),
+      getDirectory: (id) => ctx.sync.session.get(id)?.directory,
+      isWorking: (id) => ctx.sync.session.data.session_working(id),
+    })
+    if (working > 0) {
+      dialog.show(() => (
+        <Dialog title={language.t("project.close.title")} fit>
+          <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+            <div class="flex flex-col gap-1">
+              <span class="text-14-regular text-text-strong">
+                {language.t("project.close.confirm", { name: displayName(project) })}
+              </span>
+              <span class="text-12-regular text-text-weak">
+                {working === 1
+                  ? language.t("project.close.working.one")
+                  : language.t("project.close.working.many", { count: working })}{" "}
+                {language.t("project.close.note")}
+              </span>
+            </div>
+            <div class="flex justify-end gap-2">
+              <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+                {language.t("common.cancel")}
+              </Button>
+              <Button
+                variant="primary"
+                size="large"
+                onClick={() => {
+                  dialog.close()
+                  performCloseHomeProject(conn, directory)
+                }}
+              >
+                {language.t("project.close.button")}
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      ))
+      return
+    }
+    performCloseHomeProject(conn, directory)
+  }
+
   function closeSearch() {
     setState("search", "")
     setState("searchFocused", false)
@@ -484,12 +557,20 @@ export function NewHome() {
               const sessionID = entry.sessionID
               const server = entry.server
               const directory = entry.project?.worktree ?? entry.directory
+              // Warm lineage so TargetSessionRoute peeks directory without waiting on session.get.
+              ctx.sync.session.remember({
+                id: sessionID,
+                slug: sessionID,
+                projectID: entry.project?.id ?? "",
+                directory: entry.directory,
+                title: entry.title ?? sessionID,
+                version: "",
+                time: { created: Date.now(), updated: Date.now() },
+              })
               ctx.projects.open(directory)
               ctx.projects.touch(directory)
-              void startTransition(() => {
-                const tab = tabs.addSessionTab({ server, sessionId: sessionID })
-                tabs.select(tab)
-              })
+              const tab = tabs.addSessionTab({ server, sessionId: sessionID })
+              tabs.select(tab)
             }}
           />
         ))
@@ -589,16 +670,19 @@ export function NewHome() {
     if (!conn) return
     const directory = project?.worktree ?? session.directory
     const ctx = global.ensureServerCtx(conn)
+    // Warm lineage before navigate so TargetSessionRoute can peek directory immediately
+    // (otherwise Show when={directory()} blanks the page until session.get resolves).
+    ctx.sync.session.remember(session)
     ctx.projects.open(directory)
     if (options?.background) {
       tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
       return
     }
     ctx.projects.touch(directory)
-    startTransition(() => {
-      const tab = tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
-      tabs.select(tab)
-    })
+    const tab = tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
+    // Navigate outside startTransition: in-transition navigate can delay URL commit
+    // while lineage resolve runs (session-lineage.ts notes this can deadlock UI).
+    tabs.select(tab)
   }
 
   async function archiveSession(session: Session) {
@@ -670,13 +754,7 @@ export function NewHome() {
             chooseProject={(conn) => void chooseProject(conn)}
             editProject={editProject}
             closeProject={(conn, directory) => {
-              const next = closeHomeProject(
-                selection(),
-                ServerConnection.key(conn),
-                global.ensureServerCtx(conn).projects,
-                directory,
-              )
-              if (next) setSelection(next)
+              void closeHomeProjectWithDispose(conn, directory)
             }}
             clearNotifications={clearNotifications}
             unseenCount={unseenCount}

@@ -7,8 +7,6 @@ import { ServerScope } from "@/utils/server-scope"
 import {
   createLatestPreferencePusher,
   fetchPreferences,
-  mergeOpenedProjects,
-  mergeOpenedProjectsRemoteFirst,
   normalizeOpenedProjects,
   openedProjectsEqual,
   PreferenceKeys,
@@ -343,6 +341,17 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const isLocal = createMemo(() => ServerConnection.local(current()))
 
     // --- Server preference sync ---
+    // opened_projects / last_project are server-authoritative across clients that share
+    // the same backend. Startup and live SSE both replace local when the key exists;
+    // localStorage is only seeded to the server when the key is missing.
+    let resolvePreferenceReady: (() => void) | undefined
+    const preferenceReadyPromise = new Promise<void>((resolve) => {
+      resolvePreferenceReady = resolve
+    })
+    const markPreferenceReady = () => {
+      resolvePreferenceReady?.()
+      resolvePreferenceReady = undefined
+    }
     {
       const [initialSyncDone, setInitialSyncDone] = createSignal(false)
       // Latest-wins coalesced PUTs: rapid multi-open must not let an older short list
@@ -363,10 +372,8 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         return { username: active.http.username, password: active.http.password }
       }
 
-      const applyRemotePrefs = (
-        remotePrefs: Record<string, string> | null,
-        mode: "merge" | "merge-remote" | "replace" = "merge",
-      ) => {
+      /** Replace local store from remote when keys exist. Does not merge or union lists. */
+      const applyRemotePrefs = (remotePrefs: Record<string, string> | null) => {
         if (!remotePrefs) return false
         // Local writes in flight own the truth until they settle; applying a stale
         // remote snapshot mid-push is the "projects disappear while opening many" path.
@@ -375,17 +382,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         const scopeKey = scope()
 
         const remoteProjects = remotePrefs[PreferenceKeys.openedProjects]
-        if (remoteProjects) {
+        // Key present (including "[]") → server wins. Missing key → keep local for seed.
+        if (remoteProjects !== undefined) {
           try {
             const parsed = JSON.parse(remoteProjects) as OpenedProjectPref[]
             if (Array.isArray(parsed)) {
               const current = store.projects[scopeKey]
-              const next =
-                mode === "replace"
-                  ? normalizeOpenedProjects(parsed)
-                  : mode === "merge-remote"
-                    ? mergeOpenedProjectsRemoteFirst(current, parsed, pathKey)
-                    : mergeOpenedProjects(current, parsed, pathKey)
+              const next = normalizeOpenedProjects(parsed)
               // Equal snapshots (including PUT self-echo) must not replace store identity:
               // thrashing projects[] remounts the sidebar rail and drops prompt selection.
               if (!openedProjectsEqual(current, next)) {
@@ -399,10 +402,9 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         }
 
         const remoteLastProject = remotePrefs[PreferenceKeys.lastProject]
-        if (remoteLastProject) {
-          // Keep a non-empty local selection on restart; only fill when local is empty.
+        if (remoteLastProject !== undefined) {
           const localLast = store.lastProject[scopeKey]
-          if ((mode === "replace" || !localLast) && localLast !== remoteLastProject) {
+          if (localLast !== remoteLastProject) {
             setStore("lastProject", scopeKey, remoteLastProject)
             changed = true
           }
@@ -412,10 +414,9 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       }
 
       const refreshRemotePrefs = () => {
-        // Live SSE refresh: replace so another client's intentional close/open wins.
-        // Startup still uses merge (see init effect) to protect local-only opens.
+        // Live SSE: replace so another client's intentional close/open wins.
         fetchPreferences(activeUrl(), activeCredentials())
-          .then((remotePrefs) => applyRemotePrefs(remotePrefs, "replace"))
+          .then((remotePrefs) => applyRemotePrefs(remotePrefs))
           .catch(() => {
             /* server may be offline */
           })
@@ -433,37 +434,41 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
               .then((remotePrefs) => {
                 if (!remotePrefs) {
                   setInitialSyncDone(true)
+                  markPreferenceReady()
                   return
                 }
 
-                // Startup: remote order first so localhost / 127.0.0.1 / LAN IP clients
-                // share one rail from /preference. Local-only opens still append
-                // (mergeOpenedProjectsRemoteFirst). Live SSE refresh uses replace.
-                applyRemotePrefs(remotePrefs, "merge-remote")
+                // Server is source of truth when keys exist (including empty opened list).
+                applyRemotePrefs(remotePrefs)
 
-                // Always push the post-merge local truth so the server catches up.
-                // Previously we only seeded when the key was missing; after a race
-                // wrote a short list, the key existed forever and local never re-seeded.
+                // Seed only when the server has never stored the key — never re-push a
+                // local-only union that would resurrect projects closed on another client.
                 const scopeKey = scope()
-                const localProjects = store.projects[scopeKey]
-                if (localProjects !== undefined) {
-                  preferencePusher.push(
-                    activeUrl(),
-                    PreferenceKeys.openedProjects,
-                    JSON.stringify(localProjects),
-                    activeCredentials(),
-                  )
+                if (remotePrefs[PreferenceKeys.openedProjects] === undefined) {
+                  const localProjects = store.projects[scopeKey]
+                  if (localProjects !== undefined) {
+                    preferencePusher.push(
+                      activeUrl(),
+                      PreferenceKeys.openedProjects,
+                      JSON.stringify(localProjects),
+                      activeCredentials(),
+                    )
+                  }
                 }
-                const localLast = store.lastProject[scopeKey]
-                if (localLast !== undefined) {
-                  preferencePusher.push(activeUrl(), PreferenceKeys.lastProject, localLast, activeCredentials())
+                if (remotePrefs[PreferenceKeys.lastProject] === undefined) {
+                  const localLast = store.lastProject[scopeKey]
+                  if (localLast !== undefined) {
+                    preferencePusher.push(activeUrl(), PreferenceKeys.lastProject, localLast, activeCredentials())
+                  }
                 }
 
                 setInitialSyncDone(true)
+                markPreferenceReady()
               })
               .catch(() => {
                 // Server may be offline — mark sync done so local changes can still push
                 setInitialSyncDone(true)
+                markPreferenceReady()
               })
           },
         ),
@@ -527,6 +532,8 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     return {
       ready: isReady,
+      /** Resolves after the first preference fetch (or offline fallback). Autoselect should wait. */
+      preferenceReady: { promise: preferenceReadyPromise },
       isLocal,
       get key() {
         return state.active

@@ -2,6 +2,7 @@ import { Effect } from "effect"
 import { UI } from "../ui"
 import { effectCmd } from "../effect-cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
+import { applyLocalServerAuthEnv } from "@/server/local-server-config"
 import open from "open"
 import { networkInterfaces } from "os"
 
@@ -38,6 +39,7 @@ export const WebCommand = effectCmd({
     if (args.password) {
       process.env.OPENCODE_SERVER_PASSWORD = args.password
     }
+    applyLocalServerAuthEnv()
     const { Server } = yield* Effect.promise(() => import("../../server/server"))
     const opts = yield* resolveNetworkOptions(args)
     const server = yield* Effect.promise(() => Server.listen(opts))

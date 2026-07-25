@@ -2,7 +2,8 @@ import { Effect } from "effect"
 import { SidecarDiagnostics } from "./sidecar"
 import { SessionProgress } from "./session-progress"
 
-const DEFAULT_FLUSH_MS = 24
+// Was 24ms (local 2026-07-10). Raise to 100ms to cut PartDelta bus churn on busy shells.
+const DEFAULT_FLUSH_MS = 100
 const DEFAULT_MAX_CHARS = 8_192
 
 export type PartDeltaInput = {

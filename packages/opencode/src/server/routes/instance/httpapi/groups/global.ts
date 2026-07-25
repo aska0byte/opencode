@@ -62,12 +62,20 @@ const GlobalUpgradeResult = Schema.Union([
   }),
 ])
 
+const LocalServerConfigSchema = Schema.Struct({
+  port: Schema.Number,
+  listen: Schema.Union([Schema.Literal("local"), Schema.Literal("global")]),
+  username: Schema.String,
+  password: Schema.String,
+}).annotate({ identifier: "LocalServerConfig" })
+
 export const GlobalPaths = {
   health: "/global/health",
   event: "/global/event",
   config: "/global/config",
   dispose: "/global/dispose",
   upgrade: "/global/upgrade",
+  localServer: "/global/local-server",
 } as const
 
 export const GlobalApi = HttpApi.make("global").add(
@@ -109,6 +117,26 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.config.update",
           summary: "Update global configuration",
           description: "Update global OpenCode configuration settings and preferences.",
+        }),
+      ),
+      HttpApiEndpoint.get("localServerGet", GlobalPaths.localServer, {
+        success: described(LocalServerConfigSchema, "Local server listen config"),
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.localServer.get",
+          summary: "Get local server config",
+          description: "Read port, bind mode, and Basic Auth for the next process start (file-backed).",
+        }),
+      ),
+      HttpApiEndpoint.put("localServerSet", GlobalPaths.localServer, {
+        payload: LocalServerConfigSchema,
+        success: described(LocalServerConfigSchema, "Saved local server config"),
+        error: HttpApiError.BadRequest,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.localServer.set",
+          summary: "Set local server config",
+          description: "Persist port, bind mode, and Basic Auth; takes effect after restarting opencode web/serve.",
         }),
       ),
       HttpApiEndpoint.post("dispose", GlobalPaths.dispose, {

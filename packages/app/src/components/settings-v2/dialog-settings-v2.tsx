@@ -1,4 +1,4 @@
-import { Component, createSignal, startTransition } from "solid-js"
+import { Component, createSignal, onCleanup, onMount, startTransition } from "solid-js"
 import { Dialog } from "@opencode-ai/ui/v2/dialog-v2"
 import { TabsV2 } from "@opencode-ai/ui/v2/tabs-v2"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -12,6 +12,8 @@ import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 
+const NARROW_MQ = "(max-width: 639px)"
+
 export const DialogSettings: Component<{
   sessionID?: string
   defaultValue?: string
@@ -20,6 +22,17 @@ export const DialogSettings: Component<{
   const platform = usePlatform()
   const dialog = useDialog()
   const [tab, setTab] = createSignal(props.defaultValue ?? "general")
+  const [narrow, setNarrow] = createSignal(
+    typeof window !== "undefined" ? window.matchMedia(NARROW_MQ).matches : false,
+  )
+
+  onMount(() => {
+    const mql = window.matchMedia(NARROW_MQ)
+    const onChange = () => setNarrow(mql.matches)
+    onChange()
+    mql.addEventListener("change", onChange)
+    onCleanup(() => mql.removeEventListener("change", onChange))
+  })
 
   const showProviders = () => {
     void dialog.show(() => <DialogSettings sessionID={props.sessionID} defaultValue="providers" />)
@@ -28,7 +41,7 @@ export const DialogSettings: Component<{
   return (
     <Dialog size="x-large" variant="settings" class="settings-v2-dialog">
       <TabsV2
-        orientation="vertical"
+        orientation={narrow() ? "horizontal" : "vertical"}
         variant="settings"
         value={tab()}
         onChange={(value) => void startTransition(() => setTab(value))}

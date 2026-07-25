@@ -158,6 +158,29 @@ export class SessionProgress {
       pendingRemaining: input.pendingRemaining,
     })
   }
+
+  static markPartUpdatedPending(input: { readonly pendingKeys: number }): void {
+    if (input.pendingKeys < PART_DELTA_PENDING_MARK_THRESHOLD) return
+    SidecarDiagnostics.mark("Session.partUpdated.pending", {
+      pendingKeys: input.pendingKeys,
+    })
+  }
+
+  static markPartUpdatedFlush(input: {
+    readonly sessionID: string
+    readonly messageID: string
+    readonly partID: string
+    readonly updates: number
+    readonly pendingRemaining: number
+  }): void {
+    SidecarDiagnostics.mark("Session.partUpdated.flush", {
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      partID: input.partID,
+      updates: input.updates,
+      pendingRemaining: input.pendingRemaining,
+    })
+  }
 }
 
 export class StreamProgressHandle {

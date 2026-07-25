@@ -61,10 +61,12 @@ import { ServerConnection, useServer } from "@/context/server"
 import { useLanguage, type Locale } from "@/context/language"
 import { pathKey } from "@/utils/path-key"
 import {
+  countProjectWorkingSessions,
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
   latestRootSession,
+  projectWorkspaceDirectories,
   sortedRootSessions,
 } from "./layout/helpers"
 import {
@@ -540,19 +542,20 @@ export default function LegacyLayout(props: ParentProps) {
   const [autoselecting] = createResource(async () => {
     await ready.promise
     await layout.ready.promise
+    // Wait for server preference replace so we do not reopen a project closed on the server
+    // (or lastProject left over after closing the final project).
+    await server.preferenceReady.promise
     if (!untrack(() => state.autoselect)) return
 
     const list = layout.projects.list()
     const last = server.projects.last()
 
-    if (list.length === 0) {
-      if (!last) return
-      await openProject(last, true)
-    } else {
-      const next = list.find((project) => project.worktree === last) ?? list[0]
-      if (!next) return
-      await openProject(next.worktree, true)
-    }
+    // Empty opened list is intentional (user closed everything) — do not resurrect via lastProject.
+    if (list.length === 0) return
+
+    const next = list.find((project) => project.worktree === last) ?? list[0]
+    if (!next) return
+    await openProject(next.worktree, true)
   })
 
   const workspaceName = (directory: string, projectId?: string, branch?: string) => {
@@ -1307,31 +1310,113 @@ export default function LegacyLayout(props: ParentProps) {
     setWorkspaceName(directory, next, projectId, branch)
   }
 
-  function closeProject(directory: string) {
+  function projectWorkingSessionCount(project: LocalProject) {
+    const directories = projectWorkspaceDirectories(project)
+    const session = serverSync().session
+    return countProjectWorkingSessions({
+      directories,
+      sessionIDs: Object.keys(session.data.session_status),
+      getDirectory: (id) => session.get(id)?.directory,
+      isWorking: (id) => session.data.session_working(id),
+    })
+  }
+
+  async function disposeProjectInstances(project: LocalProject) {
+    const directories = projectWorkspaceDirectories(project)
+    const sync = serverSync()
+    const sdk = serverSDK()
+    // Drop client stores first so server.instance.disposed does not re-bootstrap.
+    for (const directory of directories) {
+      sync.disposeDirectory(directory, { force: true })
+    }
+    await Promise.all(
+      directories.map((directory) =>
+        sdk.client.instance.dispose({ directory }).catch(() => undefined),
+      ),
+    )
+  }
+
+  function performCloseProject(project: LocalProject) {
     const list = layout.projects.list()
-    const key = pathKey(directory)
+    const key = pathKey(project.worktree)
     const index = list.findIndex((x) => pathKey(x.worktree) === key)
-    const active = pathKey(currentProject()?.worktree ?? "") === key
     if (index === -1) return
 
+    const active = pathKey(currentProject()?.worktree ?? "") === key
+
     if (!active) {
-      layout.projects.close(directory)
+      layout.projects.close(project.worktree)
+      void disposeProjectInstances(project)
       return
     }
 
     if (list.length === 1) {
-      layout.projects.close(directory)
+      layout.projects.close(project.worktree)
       navigate("/")
+      void disposeProjectInstances(project)
       return
     }
 
     const next = list[index + 1] ?? list[index - 1]
-
+    // Leave the route before dispose so the active view is not mid-request on this instance.
     navigateWithSidebarReset(`/${base64Encode(next.worktree)}/session`)
-    layout.projects.close(directory)
+    layout.projects.close(project.worktree)
     queueMicrotask(() => {
       void navigateToProject(next.worktree)
+      void disposeProjectInstances(project)
     })
+  }
+
+  function closeProject(directory: string) {
+    const list = layout.projects.list()
+    const key = pathKey(directory)
+    const project = list.find((x) => pathKey(x.worktree) === key)
+    if (!project) return
+
+    const working = projectWorkingSessionCount(project)
+    if (working > 0) {
+      dialog.show(() => (
+        <DialogCloseProject
+          name={displayName(project)}
+          working={working}
+          onConfirm={() => {
+            dialog.close()
+            performCloseProject(project)
+          }}
+        />
+      ))
+      return
+    }
+
+    performCloseProject(project)
+  }
+
+  function DialogCloseProject(props: { name: string; working: number; onConfirm: () => void }) {
+    return (
+      <Dialog title={language.t("project.close.title")} fit>
+        <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+          <div class="flex flex-col gap-1">
+            <span class="text-14-regular text-text-strong">
+              {language.t("project.close.confirm", { name: props.name })}
+            </span>
+            <span class="text-12-regular text-text-weak">
+              {props.working === 1
+                ? language.t("project.close.working.one")
+                : language.t("project.close.working.many", { count: props.working })}{" "}
+              {language.t("project.close.note")}
+            </span>
+          </div>
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+              {language.t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="large" onClick={props.onConfirm}>
+              {language.t("project.close.button")}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    )
   }
 
   function toggleProjectWorkspaces(project: LocalProject) {

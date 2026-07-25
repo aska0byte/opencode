@@ -19,5 +19,6 @@ declare module "virtual:opencode-server" {
     export const install: typeof import("../../../opencode/dist/types/src/node").SidecarDiagnostics.install
     export const clear: typeof import("../../../opencode/dist/types/src/node").SidecarDiagnostics.clear
   }
+  export function setActivePortableInstance(configPath: string | undefined): void
   export const bootstrap: typeof import("../../../opencode/dist/types/src/node").bootstrap
 }

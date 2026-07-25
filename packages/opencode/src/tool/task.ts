@@ -4,13 +4,14 @@ import { ToolJsonSchema } from "./json-schema"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
+import { SessionStatus } from "@/session/status"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
-import { Effect, Exit, Schema, Scope } from "effect"
+import { Effect, Exit, Option, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
@@ -46,7 +47,7 @@ const BaseParameterFields = {
   subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
   task_id: Schema.optional(Schema.String).annotate({
     description:
-      "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
+      "Resume a previous task by its subagent session id (must start with ses_). Do not pass background job UUIDs from call_omo/background_output — those are not session ids.",
   }),
   command: Schema.optional(Schema.String).annotate({ description: "The command that triggered this task" }),
 }
@@ -85,6 +86,7 @@ export const TaskTool = Tool.define(
     const background = yield* BackgroundJob.Service
     const config = yield* Config.Service
     const sessions = yield* Session.Service
+    const status = yield* SessionStatus.Service
     const scope = yield* Scope.Scope
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
@@ -133,8 +135,11 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
 
-      const session = params.task_id
-        ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+      // task_id must be a SessionID (ses_*). Models sometimes pass background
+      // job UUIDs here; SessionID.make would throw a sync defect before catchCause.
+      const resumeID = params.task_id ? Schema.decodeUnknownOption(SessionID)(params.task_id) : Option.none()
+      const session = Option.isSome(resumeID)
+        ? yield* sessions.get(resumeID.value).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
       const childPermission = deriveSubagentSessionPermission({
         parentSessionPermission: parent.permission ?? [],
@@ -270,6 +275,9 @@ export const TaskTool = Tool.define(
         }
       }
 
+      // Keep parent session busy while the native background job is unsettled so
+      // external completion heuristics (e.g. OMO) do not treat the parent turn as idle.
+      const releaseParent = yield* status.acquire(ctx.sessionID)
       const info = yield* background.start({
         id: nextSession.id,
         type: id,
@@ -284,6 +292,7 @@ export const TaskTool = Tool.define(
         ]),
         run: runTask().pipe(Effect.onInterrupt(() => ops.cancel(nextSession.id))),
       })
+      yield* background.wait({ id: info.id }).pipe(Effect.ensuring(releaseParent), Effect.forkIn(scope, { startImmediately: true }))
 
       function backgroundResult() {
         return {

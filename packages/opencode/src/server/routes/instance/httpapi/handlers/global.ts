@@ -8,10 +8,11 @@ import { InstallationDisplayVersion } from "@opencode-ai/core/installation/versi
 import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
+import { resolveLocalServerConfig, writeLocalServerConfig } from "@/server/local-server-config"
 
 function eventData(data: unknown): Sse.Event {
   return {
@@ -94,6 +95,17 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       return true
     })
 
+    const localServerGet = Effect.fn("GlobalHttpApi.localServerGet")(function* () {
+      return resolveLocalServerConfig()
+    })
+
+    const localServerSet = Effect.fn("GlobalHttpApi.localServerSet")(function* (ctx) {
+      return yield* Effect.tryPromise({
+        try: () => writeLocalServerConfig(ctx.payload),
+        catch: (cause) => cause,
+      }).pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
+    })
+
     const upgrade = Effect.fn("GlobalHttpApi.upgrade")(function* (_ctx: { payload: typeof GlobalUpgradeInput.Type }) {
       // 魔改版：禁止自动/手动升级
       return {
@@ -126,6 +138,8 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handleRaw("event", event)
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)
+      .handle("localServerGet", localServerGet)
+      .handle("localServerSet", localServerSet)
       .handle("dispose", dispose)
       .handleRaw("upgrade", upgradeRaw)
   }),

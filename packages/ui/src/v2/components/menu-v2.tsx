@@ -1,6 +1,6 @@
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { ContextMenu } from "@kobalte/core/context-menu"
-import { Show, splitProps, type Component, type ComponentProps, type JSX, type ParentProps } from "solid-js"
+import { onCleanup, Show, splitProps, type Component, type ComponentProps, type JSX, type ParentProps } from "solid-js"
 import "./menu-v2.css"
 
 const ChevronRight: Component = () => (
@@ -186,6 +186,118 @@ function MenuV2Root(props: ComponentProps<typeof DropdownMenu>) {
   return <DropdownMenu {...props} />
 }
 
+	const LONG_PRESS_MS = 500
+	const LONG_PRESS_MOVE_PX = 10
+
+	/** Primary-button hold → context menu (MenuV2 uses raw Kobalte, not ui ContextMenu). */
+	function attachContextLongPress(el: HTMLElement) {
+	  let timer: number | undefined
+	  let startX = 0
+	  let startY = 0
+	  let fired = false
+	  let activePointerId: number | undefined
+
+	  const clearTimer = () => {
+	    if (timer !== undefined) {
+	      window.clearTimeout(timer)
+	      timer = undefined
+	    }
+	  }
+
+	  const openAt = (x: number, y: number) => {
+	    fired = true
+	    el.dispatchEvent(
+	      new MouseEvent("contextmenu", {
+	        bubbles: true,
+	        cancelable: true,
+	        clientX: x,
+	        clientY: y,
+	        button: 2,
+	        buttons: 2,
+	        view: window,
+	      }),
+	    )
+	  }
+
+	  const onPointerDown = (e: PointerEvent) => {
+	    if (e.button !== 0) return
+	    if (e.pointerType === "mouse" && e.ctrlKey) return
+	    startX = e.clientX
+	    startY = e.clientY
+	    fired = false
+	    activePointerId = e.pointerId
+	    clearTimer()
+	    timer = window.setTimeout(() => {
+	      timer = undefined
+	      openAt(startX, startY)
+	    }, LONG_PRESS_MS)
+	  }
+
+	  const onPointerMove = (e: PointerEvent) => {
+	    if (activePointerId !== e.pointerId) return
+	    if (timer === undefined) return
+	    if (Math.hypot(e.clientX - startX, e.clientY - startY) > LONG_PRESS_MOVE_PX) clearTimer()
+	  }
+
+	  const onPointerUp = (e: PointerEvent) => {
+	    if (activePointerId !== e.pointerId) return
+	    clearTimer()
+	    activePointerId = undefined
+	    if (!fired) return
+	    e.preventDefault()
+	    e.stopPropagation()
+	  }
+
+	  const onPointerCancel = (e: PointerEvent) => {
+	    if (activePointerId !== undefined && activePointerId !== e.pointerId) return
+	    clearTimer()
+	    activePointerId = undefined
+	    fired = false
+	  }
+
+	  const onClickCapture = (e: MouseEvent) => {
+	    if (!fired) return
+	    e.preventDefault()
+	    e.stopPropagation()
+	    e.stopImmediatePropagation()
+	    fired = false
+	  }
+
+	  el.style.touchAction = el.style.touchAction || "manipulation"
+	  el.addEventListener("pointerdown", onPointerDown)
+	  el.addEventListener("pointermove", onPointerMove)
+	  el.addEventListener("pointerup", onPointerUp)
+	  el.addEventListener("pointercancel", onPointerCancel)
+	  el.addEventListener("click", onClickCapture, true)
+
+	  return () => {
+	    clearTimer()
+	    el.removeEventListener("pointerdown", onPointerDown)
+	    el.removeEventListener("pointermove", onPointerMove)
+	    el.removeEventListener("pointerup", onPointerUp)
+	    el.removeEventListener("pointercancel", onPointerCancel)
+	    el.removeEventListener("click", onClickCapture, true)
+	  }
+	}
+
+	function MenuV2ContextTrigger(props: ParentProps<ComponentProps<typeof ContextMenu.Trigger>>) {
+	  const [local, rest] = splitProps(props, ["class", "classList", "children"])
+	  return (
+	    <ContextMenu.Trigger
+	      {...rest}
+	      classList={{ ...local.classList, [local.class ?? ""]: !!local.class }}
+	      ref={(el) => {
+	        if (!(el instanceof HTMLElement)) return
+	        onCleanup(attachContextLongPress(el))
+	        const userRef = (rest as { ref?: ((el: HTMLElement) => void) | HTMLElement }).ref
+	        if (typeof userRef === "function") userRef(el)
+	      }}
+	    >
+	      {local.children}
+	    </ContextMenu.Trigger>
+	  )
+	}
+
 function MenuV2ContextRoot(props: ComponentProps<typeof ContextMenu>) {
   return <ContextMenu {...props} />
 }
@@ -202,7 +314,7 @@ function MenuV2ContextContent(props: ComponentProps<typeof ContextMenu.Content>)
 }
 
 const MenuV2Context = Object.assign(MenuV2ContextRoot, {
-  Trigger: ContextMenu.Trigger,
+  Trigger: MenuV2ContextTrigger,
   Portal: ContextMenu.Portal,
   Content: MenuV2ContextContent,
 })

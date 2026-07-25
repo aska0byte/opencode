@@ -2,6 +2,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Context, Layer, Schema } from "effect"
 import { sql } from "drizzle-orm"
+import { projectLabel, projectPathHint } from "./project-label"
 
 export interface RecordStepInput {
   readonly sessionID: string
@@ -42,7 +43,10 @@ export const recordStep = (input: RecordStepInput) =>
 export const QueryResult = Schema.Struct({
   date: Schema.String,
   project_id: Schema.String,
+  /** Display label (directory basename preferred). */
   project_worktree: Schema.String,
+  /** Full path hint for tooltip. */
+  project_path: Schema.optional(Schema.String),
   model_id: Schema.String,
   call_count: Schema.Number,
   tokens_in: Schema.Number,
@@ -51,6 +55,7 @@ export const QueryResult = Schema.Struct({
   tokens_cache_read: Schema.Number,
   tokens_cache_write: Schema.Number,
 }).annotate({ identifier: "UsageStatsQueryResult" })
+
 export type QueryResult = Schema.Schema.Type<typeof QueryResult>
 
 export const QueryDailyResult = Schema.Struct({
@@ -81,7 +86,21 @@ export const layer = Layer.effect(
     const queryByDate: Interface["queryByDate"] = (date) =>
       Effect.gen(function* () {
         const rows = yield* db.all<Record<string, unknown>>(
-          sql`SELECT du.*, p.worktree AS project_worktree
+          sql`SELECT du.*,
+                     p.worktree AS project_worktree,
+                     p.name AS project_name,
+                     (
+                       SELECT s.directory FROM "session" s
+                       WHERE s.project_id = du.project_id
+                       ORDER BY s.time_updated DESC
+                       LIMIT 1
+                     ) AS session_directory,
+                     (
+                       SELECT pd.directory FROM "project_directory" pd
+                       WHERE pd.project_id = du.project_id
+                       ORDER BY pd.time_created DESC
+                       LIMIT 1
+                     ) AS project_directory
               FROM "daily_usage" du
               LEFT JOIN "project" p ON du.project_id = p.id
               WHERE du."date" = ${date}
@@ -95,7 +114,21 @@ export const layer = Layer.effect(
         const start = new Date(Date.now() - range * 86_400_000).toLocaleDateString("en-CA")
         const end = todayStr()
         const rows = yield* db.all<Record<string, unknown>>(
-          sql`SELECT du.project_id, du.model_id, p.worktree AS project_worktree,
+          sql`SELECT du.project_id, du.model_id,
+                     p.worktree AS project_worktree,
+                     p.name AS project_name,
+                     (
+                       SELECT s.directory FROM "session" s
+                       WHERE s.project_id = du.project_id
+                       ORDER BY s.time_updated DESC
+                       LIMIT 1
+                     ) AS session_directory,
+                     (
+                       SELECT pd.directory FROM "project_directory" pd
+                       WHERE pd.project_id = du.project_id
+                       ORDER BY pd.time_created DESC
+                       LIMIT 1
+                     ) AS project_directory,
                      SUM(du.call_count) AS call_count,
                      SUM(du.tokens_in) AS tokens_in,
                      SUM(du.tokens_out) AS tokens_out,
@@ -149,11 +182,24 @@ function todayStr(): string {
 }
 
 function mapRow(row: Record<string, unknown>): QueryResult {
-  const projectPath = String(row.project_worktree ?? row.project_id ?? "")
+  const project_id = String(row.project_id ?? "")
+  // Prefer session directory, then project_directory table, then project.worktree (|| skips empty string).
+  const directory = String(row.session_directory || row.project_directory || "")
+  const worktree = String(row.project_worktree || "")
+  const project_name = String(row.project_name || "")
+  const label = projectLabel({
+    directory,
+    project_worktree: worktree,
+    project_name,
+    project_id,
+  })
+  const pathHint = projectPathHint({ directory, project_worktree: worktree })
   return {
     date: String(row.date ?? ""),
-    project_id: String(row.project_id ?? ""),
-    project_worktree: projectPath,
+    project_id,
+    // UI sorts/displays this field; put the resolved label so blanks disappear.
+    project_worktree: label,
+    project_path: pathHint || label,
     model_id: String(row.model_id ?? ""),
     call_count: Number(row.call_count ?? 0),
     tokens_in: Number(row.tokens_in ?? 0),

@@ -82,6 +82,32 @@ export function closeHomeProject(
   return selected
 }
 
+/** Worktree + sandboxes that may own a server Instance for a project. */
+export function projectWorkspaceDirectories(project: { worktree: string; sandboxes?: string[] }) {
+  return [project.worktree, ...(project.sandboxes ?? [])]
+}
+
+/**
+ * Count non-idle sessions whose directory is under the given project workspaces.
+ * Matches sidebar "working" indicator semantics (session_working !== idle).
+ */
+export function countProjectWorkingSessions(input: {
+  directories: readonly string[]
+  sessionIDs: readonly string[]
+  getDirectory: (sessionID: string) => string | undefined
+  isWorking: (sessionID: string) => boolean
+}) {
+  const dirs = new Set(input.directories.map((directory) => pathKey(directory)))
+  let count = 0
+  for (const id of input.sessionIDs) {
+    const directory = input.getDirectory(id)
+    if (!directory || !dirs.has(pathKey(directory))) continue
+    if (!input.isWorking(id)) continue
+    count += 1
+  }
+  return count
+}
+
 export function homeProjectNavigation(active: ServerConnection.Key, server: ServerConnection.Key, href: string) {
   if (active === server) return { href }
   return { server, href }

@@ -277,6 +277,23 @@ describe("cross-spawn spawner", () => {
     )
 
     fx.effect(
+      "handle.kill with forceKillAfter settles within a hard deadline",
+      Effect.gen(function* () {
+        // given a long-running child (Windows uses taskkill /T /F; must not hang forever)
+        const started = Date.now()
+        const handle = yield* js("setInterval(() => {}, 60_000)")
+
+        // when
+        const exit = yield* Effect.exit(handle.kill({ forceKillAfter: 200 }))
+        const elapsed = Date.now() - started
+
+        // then — must return even if exit is never observed (bound by awaitExit + taskkill timeouts)
+        expect(elapsed).toBeLessThan(12_000)
+        expect(Exit.isSuccess(exit) || Exit.isFailure(exit)).toBe(true)
+      }),
+    )
+
+    fx.effect(
       "isRunning reflects process state",
       Effect.gen(function* () {
         const handle = yield* js('process.stdout.write("done")')

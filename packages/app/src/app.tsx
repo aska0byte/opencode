@@ -62,6 +62,7 @@ import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout
 import LegacyLayout from "@/pages/layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
+import { recoverFromRendererError } from "./pages/error-recover"
 import { useCheckServerHealth } from "./utils/server-health"
 import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { createSessionLineage } from "@/pages/session/session-lineage"
@@ -362,6 +363,29 @@ function DraftProviders(props: ParentProps) {
   )
 }
 
+function AppErrorBoundary(props: ParentProps) {
+  const platform = usePlatform()
+  return (
+    <ErrorBoundary
+      fallback={(error, reset) => {
+        Sentry.captureException(error)
+        return (
+          <ErrorPage
+            error={error}
+            onDismiss={() => {
+              // Bare reset re-enters the same crashed route (desktop MemoryRouter restores last-active-url).
+              recoverFromRendererError(platform)
+              reset()
+            }}
+          />
+        )
+      }}
+    >
+      {props.children}
+    </ErrorBoundary>
+  )
+}
+
 export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
   return (
     <MetaProvider>
@@ -373,12 +397,7 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
       >
         <LanguageProvider locale={props.locale}>
           <UiI18nBridge>
-            <ErrorBoundary
-              fallback={(error, reset) => {
-                Sentry.captureException(error)
-                return <ErrorPage error={error} onDismiss={reset} />
-              }}
-            >
+            <AppErrorBoundary>
               <QueryProvider>
                 <WslServersProvider>
                   <DialogProvider>
@@ -388,7 +407,7 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
                   </DialogProvider>
                 </WslServersProvider>
               </QueryProvider>
-            </ErrorBoundary>
+            </AppErrorBoundary>
           </UiI18nBridge>
         </LanguageProvider>
       </ThemeProvider>

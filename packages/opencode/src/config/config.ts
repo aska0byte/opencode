@@ -427,6 +427,9 @@ const layer = Layer.effect(
           if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(dir, file)
+              // Portable/instance mode sets both OPENCODE_CONFIG and OPENCODE_CONFIG_DIR to
+              // the same product file directory; skip re-merging that exact file.
+              if (Flag.OPENCODE_CONFIG && path.resolve(source) === path.resolve(Flag.OPENCODE_CONFIG)) continue
               yield* Effect.logDebug(`loading config from ${source}`)
               yield* merge(source, yield* loadFile(source, authEnv))
               result.agent ??= {}

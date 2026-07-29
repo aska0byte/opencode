@@ -124,6 +124,83 @@ describe("bootstrapDirectory", () => {
     expect(store.status).toBe("complete")
     expect(mcpReads).toEqual([])
   })
+
+  test("loads mcp status via legacy sdk when protocol is v1", async () => {
+    // given: directory-sync path (mcp:true) against a v1 server that only exposes /mcp, not /api/mcp
+    const calls: string[] = []
+    const [store, setStore] = directoryState()
+    const mcpApi = {
+      list: async () => {
+        calls.push("api.mcp.list")
+        throw new Error("v2 mcp.list must not be used on protocol v1")
+      },
+      resource: {
+        catalog: async () => {
+          calls.push("api.mcp.resource.catalog")
+          throw new Error("v2 mcp.resource.catalog must not be used on protocol v1")
+        },
+      },
+    }
+
+    // when: bootstrap runs with mcp enabled and protocol resolved to v1
+    await bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: true,
+      protocol: Promise.resolve("v1"),
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {
+        app: { agents: async () => ({ data: [{ name: "build", mode: "primary" }] }) },
+        config: { get: async () => ({ data: {} }) },
+        vcs: { get: async () => ({ data: undefined }) },
+        command: { list: async () => ({ data: [] }) },
+        permission: { list: async () => ({ data: [] }) },
+        question: { list: async () => ({ data: [] }) },
+        session: { status: async () => ({ data: {} }) },
+        v2: { reference: { list: async () => ({ data: { data: [] } }) } },
+        mcp: {
+          status: async () => {
+            calls.push("sdk.mcp.status")
+            return { data: { demo: { status: "connected" } } }
+          },
+        },
+        experimental: {
+          resource: {
+            list: async () => {
+              calls.push("sdk.experimental.resource.list")
+              return { data: {} }
+            },
+          },
+        },
+        provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
+      } as unknown as OpencodeClient,
+      api: {
+        ...api,
+        command: { list: async () => ({ location: {}, data: [] }) },
+        mcp: mcpApi,
+      } as unknown as ServerApi,
+      store,
+      setStore,
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
+    // then: legacy mcp endpoints are used; v2 /api/mcp path is never hit
+    expect(store.status).toBe("complete")
+    expect(calls).toContain("sdk.mcp.status")
+    expect(calls).toContain("sdk.experimental.resource.list")
+    expect(calls).not.toContain("api.mcp.list")
+    expect(calls).not.toContain("api.mcp.resource.catalog")
+  })
 })
 
 describe("query keys", () => {

@@ -240,7 +240,13 @@ export function registerIpcHandlers(deps: Deps) {
 
   ipcMain.handle("set-window-focus", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    win?.focus()
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    // Windows: win.focus() alone often leaves webContents without keyboard focus
+    // after native dialogs (confirm / open/save). Focus the page explicitly.
+    if (!event.sender.isDestroyed()) event.sender.focus()
   })
 
   ipcMain.handle("show-window", (event: IpcMainInvokeEvent) => {

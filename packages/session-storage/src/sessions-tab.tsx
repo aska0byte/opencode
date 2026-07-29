@@ -209,6 +209,9 @@ export const SessionsTab: Component<{
   const [scanning, setScanning] = createSignal(false)
   const [stateLoading, setStateLoading] = createSignal(false)
   const [narrow, setNarrow] = createSignal(false)
+  // In-app confirm only — never window.confirm() (Electron steals OS focus).
+  type PendingConfirm = { kind: "delete" | "vacuum"; message: string }
+  const [pendingConfirm, setPendingConfirm] = createSignal<PendingConfirm | null>(null)
 
   onMount(() => {
     if (typeof window === "undefined" || !window.matchMedia) return
@@ -330,10 +333,15 @@ export const SessionsTab: Component<{
     setPage(1)
   }
 
-  function confirmDelete(): boolean {
+  function requestDeleteConfirm() {
     const n = selectedIDs().length
-    return confirm(
-      [
+    if (n === 0) {
+      setMessage("请先选择会话")
+      return
+    }
+    setPendingConfirm({
+      kind: "delete",
+      message: [
         `确认清理选中的 ${n} 个根会话？`,
         "",
         "· 将删除范围内未保护会话（含子树中未保护节点）",
@@ -341,7 +349,25 @@ export const SessionsTab: Component<{
         "· 若父会话下仍有已保护子会话，父会话会保留",
         "· 删除后文件体积需再点「压缩数据库」才会缩小",
       ].join("\n"),
-    )
+    })
+  }
+
+  function requestVacuumConfirm() {
+    setPendingConfirm({
+      kind: "vacuum",
+      message: "确认执行 VACUUM 压缩数据库？\n\n大库可能需要较长时间，期间请勿关闭应用。",
+    })
+  }
+
+  function cancelPendingConfirm() {
+    setPendingConfirm(null)
+  }
+
+  function acceptPendingConfirm() {
+    const pending = pendingConfirm()
+    if (!pending) return
+    setPendingConfirm(null)
+    void runBatch(pending.kind, false)
   }
 
   async function runBatch(action: "protect" | "unprotect" | "delete" | "vacuum", preview: boolean) {
@@ -423,14 +449,7 @@ export const SessionsTab: Component<{
         <button class={btnOutline} disabled={busy()} onClick={() => void runBatch("delete", true)}>
           预览删除
         </button>
-        <button
-          class={btnDanger}
-          disabled={busy()}
-          onClick={() => {
-            if (!confirmDelete()) return
-            void runBatch("delete", false)
-          }}
-        >
+        <button class={btnDanger} disabled={busy() || !!pendingConfirm()} onClick={() => requestDeleteConfirm()}>
           删除
         </button>
         <button class={btnOutline} disabled={busy()} onClick={() => void runBatch("vacuum", true)}>
@@ -438,16 +457,35 @@ export const SessionsTab: Component<{
         </button>
         <button
           class={btnSecondary}
-          disabled={busy() || state()?.idle === false}
-          onClick={() => {
-            if (!confirm("确认执行 VACUUM 压缩数据库？")) return
-            void runBatch("vacuum", false)
-          }}
+          disabled={busy() || state()?.idle === false || !!pendingConfirm()}
+          onClick={() => requestVacuumConfirm()}
         >
           压缩数据库
         </button>
       </div>
     </div>
+  )
+
+  const confirmBanner = () => (
+    <Show when={pendingConfirm()}>
+      {(pending) => (
+        <div class="flex flex-col gap-3 p-3 rounded border border-border-danger bg-surface-danger/10">
+          <div class="text-13-regular text-text-strong whitespace-pre-wrap">{pending().message}</div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <button class={btnOutline} disabled={busy()} onClick={() => cancelPendingConfirm()}>
+              取消
+            </button>
+            <button
+              class={pending().kind === "delete" ? btnDanger : btnSecondary}
+              disabled={busy()}
+              onClick={() => acceptPendingConfirm()}
+            >
+              {pending().kind === "delete" ? "确认删除" : "确认压缩"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Show>
   )
 
   const pagination = () => (
@@ -602,6 +640,8 @@ export const SessionsTab: Component<{
       <Show when={scanError()}>
         <div class="text-13-regular text-text-danger">{scanError()}</div>
       </Show>
+
+      {confirmBanner()}
 
       <Show when={!scan() && !scanning() && !scanError()}>
         <div class="text-13-regular text-text-weak">点「扫描」加载会话列表（默认最多 {DEFAULT_SCAN_LIMIT} 条）。</div>

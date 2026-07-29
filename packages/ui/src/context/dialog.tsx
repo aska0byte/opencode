@@ -29,6 +29,43 @@ type Active = {
 
 const Context = createContext<ReturnType<typeof init>>()
 
+type DesktopWindowApi = {
+  setWindowFocus?: () => Promise<unknown> | unknown
+}
+
+/** Reassert OS + DOM focus after the last modal closes (Electron-safe). */
+function restoreShellFocus() {
+  try {
+    window.focus()
+  } catch {
+    // ignore
+  }
+
+  const api = (window as Window & { api?: DesktopWindowApi }).api
+  if (api?.setWindowFocus) {
+    void Promise.resolve(api.setWindowFocus()).catch(() => undefined)
+  }
+
+  requestAnimationFrame(() => {
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      active !== document.body &&
+      active !== document.documentElement &&
+      document.body.contains(active)
+    ) {
+      active.focus({ preventScroll: true })
+      return
+    }
+
+    // Fall back to session composer when Kobalte has nowhere valid to restore.
+    const prompt = document.querySelector(
+      '[data-component="prompt-input"][contenteditable="true"]',
+    ) as HTMLElement | null
+    prompt?.focus({ preventScroll: true })
+  })
+}
+
 function init() {
   const [stack, setStack] = createSignal<Active[]>([])
   const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
@@ -57,7 +94,12 @@ function init() {
     timer.current = setTimeout(() => {
       timer.current = undefined
       current.dispose()
-      setStack((items) => items.filter((item) => item.id !== closed))
+      setStack((items) => {
+        const next = items.filter((item) => item.id !== closed)
+        // Last modal gone: native confirm / focus-trap can leave webContents unfocused on Electron.
+        if (next.length === 0) queueMicrotask(() => restoreShellFocus())
+        return next
+      })
       lock.value = false
     }, 100)
   }

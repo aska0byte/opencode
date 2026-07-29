@@ -54,6 +54,7 @@ import { registerWslIpcHandlers } from "./wsl/ipc"
 import { spawnWslSidecar } from "./wsl/sidecar"
 import { migrate } from "./migrate"
 import { cleanupStoreFiles } from "./store-cleanup"
+import { startBackgroundCli } from "./background-cli"
 
 const APP_NAMES: Record<string, string> = {
   dev: "OpenCode Dev",
@@ -66,6 +67,7 @@ const APP_IDS: Record<string, string> = {
   prod: "ai.opencode.desktop",
 }
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
+const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
@@ -224,7 +226,7 @@ const main = Effect.gen(function* () {
     return
   }
 
-  preferAppEnv(app.getPath("userData"))
+  const shellEnv = preferAppEnv(app.getPath("userData"))
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
@@ -347,8 +349,27 @@ const main = Effect.gen(function* () {
   )
 
   const loadingTask = yield* Effect.gen(function* () {
+    logger.log("sidecar connection started", { version: SIDECAR_VERSION })
+
     ensureLoopbackNoProxy()
     useEnvProxy()
+
+    if (SIDECAR_VERSION === "v2") {
+      logger.log("spawning v2 sidecar")
+      const sidecar = yield* Effect.promise(() => startBackgroundCli(logger, shellEnv?.XDG_STATE_HOME))
+      yield* Deferred.succeed(serverReady, {
+        url: sidecar.url,
+        username: sidecar.username,
+        password: sidecar.password,
+      })
+
+      if (process.platform === "win32") {
+        void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
+      }
+
+      logger.log("loading task finished")
+      return
+    }
 
     const spawnOptions = instanceLayout
       ? {

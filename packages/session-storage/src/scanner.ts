@@ -203,5 +203,5 @@ export function resolveTargets(input: {
     }
     const result = yield* scan(input.filter)
     return result.sessions
-  })
+  }).pipe(Effect.orDie)
 }

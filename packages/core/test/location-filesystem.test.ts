@@ -74,7 +74,7 @@ describe("FileSystem", () => {
           expect(entry.path.endsWith("/")).toBe(false)
         }
         const files = yield* service.list({ path: RelativePath.make("src/lib") })
-        expect(files.map((entry) => entry.path)).toEqual(["src/lib/a.ts"])
+        expect(files.map((entry) => entry.path)).toEqual([RelativePath.make("src/lib/a.ts")])
       }).pipe(provide(directory)),
     ),
   )

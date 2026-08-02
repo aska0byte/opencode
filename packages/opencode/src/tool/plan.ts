@@ -4,13 +4,19 @@ import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Question } from "../question"
 import { Session } from "@/session/session"
-import { MessageV2 } from "../session/message-v2"
 import { Provider } from "@/provider/provider"
 import { InstanceState } from "@/effect/instance-state"
 import { MessageID, PartID } from "../session/schema"
+import { Agent } from "@/agent/agent"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
 export const Parameters = Schema.Struct({})
+
+/** Prefer super-build when registered (opencode-super); else native build. */
+function resolvePlanExitAgent(agents: ReadonlyArray<{ name: string }>): string {
+  if (agents.some((a) => a.name === "super-build")) return "super-build"
+  return "build"
+}
 
 export const PlanExitTool = Tool.define(
   "plan_exit",
@@ -18,6 +24,7 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const agents = yield* Agent.Service
 
     return {
       description: EXIT_DESCRIPTION,
@@ -27,15 +34,20 @@ export const PlanExitTool = Tool.define(
           const instance = yield* InstanceState.context
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(instance.worktree, Session.plan(info, instance))
+          const listed = yield* agents.list()
+          const targetAgent = resolvePlanExitAgent(listed)
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             questions: [
               {
-                question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-                header: "Build Agent",
+                question: `Plan at ${plan} is complete. Would you like to switch to the ${targetAgent} agent and start implementing?`,
+                header: targetAgent === "super-build" ? "Super Build" : "Build Agent",
                 custom: false,
                 options: [
-                  { label: "Yes", description: "Switch to build agent and start implementing the plan" },
+                  {
+                    label: "Yes",
+                    description: `Switch to ${targetAgent} agent and start implementing the plan`,
+                  },
                   { label: "No", description: "Stay with plan agent to continue refining the plan" },
                 ],
               },
@@ -56,7 +68,7 @@ export const PlanExitTool = Tool.define(
             sessionID: ctx.sessionID,
             role: "user",
             time: { created: Date.now() },
-            agent: "build",
+            agent: targetAgent,
             model,
           }
           yield* session.updateMessage(msg)
@@ -65,14 +77,17 @@ export const PlanExitTool = Tool.define(
             messageID: msg.id,
             sessionID: ctx.sessionID,
             type: "text",
-            text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
+            text:
+              targetAgent === "super-build"
+                ? `The plan at ${plan} has been approved. You are super-build. Read the plan, todowrite a full checklist (waves/tasks + verify), spawn task workers, execute and verify.`
+                : `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
             synthetic: true,
           } satisfies SessionV1.TextPart)
 
           return {
-            title: "Switching to build agent",
-            output: "User approved switching to build agent. Wait for further instructions.",
-            metadata: {},
+            title: `Switching to ${targetAgent} agent`,
+            output: `User approved switching to ${targetAgent} agent. Wait for further instructions.`,
+            metadata: { agent: targetAgent },
           }
         }).pipe(Effect.orDie),
     }

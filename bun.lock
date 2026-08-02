@@ -793,6 +793,16 @@
         "@typescript/native-preview": "catalog:",
       },
     },
+    "packages/session-storage": {
+      "name": "@opencode-ai/session-storage",
+      "version": "0.0.1",
+      "dependencies": {
+        "@opencode-ai/core": "workspace:*",
+        "drizzle-orm": "catalog:",
+        "effect": "catalog:",
+        "solid-js": "*",
+      },
+    },
     "packages/session-ui": {
       "name": "@opencode-ai/session-ui",
       "version": "1.18.11",
@@ -1022,6 +1032,17 @@
       "peerDependencies": {
         "@solidjs/meta": "^0.29.0",
         "solid-js": "^1.9.0",
+      },
+    },
+    "packages/usage-stats": {
+      "name": "@opencode-ai/usage-stats",
+      "version": "0.0.1",
+      "dependencies": {
+        "@opencode-ai/core": "workspace:*",
+        "@opencode-ai/ui": "workspace:*",
+        "drizzle-orm": "catalog:",
+        "effect": "catalog:",
+        "solid-js": "*",
       },
     },
     "packages/web": {
@@ -1997,6 +2018,8 @@
 
     "@opencode-ai/server": ["@opencode-ai/server@workspace:packages/server"],
 
+    "@opencode-ai/session-storage": ["@opencode-ai/session-storage@workspace:packages/session-storage"],
+
     "@opencode-ai/session-ui": ["@opencode-ai/session-ui@workspace:packages/session-ui"],
 
     "@opencode-ai/slack": ["@opencode-ai/slack@workspace:packages/slack"],
@@ -2012,6 +2035,8 @@
     "@opencode-ai/tui": ["@opencode-ai/tui@workspace:packages/tui"],
 
     "@opencode-ai/ui": ["@opencode-ai/ui@workspace:packages/ui"],
+
+    "@opencode-ai/usage-stats": ["@opencode-ai/usage-stats@workspace:packages/usage-stats"],
 
     "@opencode-ai/web": ["@opencode-ai/web@workspace:packages/web"],
 

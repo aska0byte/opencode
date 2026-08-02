@@ -2121,13 +2121,12 @@ ToolRegistry.register({
   render(props) {
     const data = useData()
     const i18n = useI18n()
-    const location = useLocation()
 
     const childSessionId = createMemo(() => {
       // Prefer real session metadata; never treat background job UUIDs in task_id as sessions.
       const value = asSessionID(props.metadata.sessionId) ?? asSessionID(props.input.task_id)
       if (value) return value
-      return taskSession(props.input, location.pathname, data.store.session, data.store.agent)
+      return taskSession(props.input, data.sessionID, data.store.session, data.store.agent)
     })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
     const title = createMemo(() => agent().name ?? i18n.t("ui.tool.agent.default"))
@@ -2150,7 +2149,7 @@ ToolRegistry.register({
       return text.slice(0, 2000) + "\n\n... (truncated)"
     })
 
-    const href = createMemo(() => sessionLink(childSessionId(), location.pathname, data.sessionHref))
+    const href = createMemo(() => sessionLink(childSessionId(), undefined, data.sessionHref))
     const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
 
     const open = () => {

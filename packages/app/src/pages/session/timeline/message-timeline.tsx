@@ -699,7 +699,7 @@ export function MessageTimeline(props: {
   const viewShare = () => {
     const url = shareUrl()
     if (!url) return
-    platform.openLink(url)
+    platform.openExternal(url)
   }
 
   const errorMessage = (err: unknown) => {

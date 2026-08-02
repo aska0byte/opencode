@@ -62,7 +62,6 @@ import { AnimatedCountList } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
-import { useLocation } from "@solidjs/router"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText } from "./message-part-text"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
@@ -589,14 +588,15 @@ function asSessionID(value: unknown): string | undefined {
   return undefined
 }
 
-function sessionLink(id: string | undefined, path: string, href?: (id: string) => string | undefined) {
-  if (!id) return
+function sessionLink(id: string | undefined, path: string | undefined, href?: (id: string) => string | undefined) {
+  if (!id) return undefined
 
   const direct = href?.(id)
   if (direct) return direct
 
+  if (!path) return undefined
   const idx = path.indexOf("/session")
-  if (idx === -1) return
+  if (idx === -1) return undefined
   return `${path.slice(0, idx)}/session/${id}`
 }
 
@@ -606,12 +606,17 @@ function currentSession(path: string) {
 
 function taskSession(
   input: Record<string, any>,
-  path: string,
+  parentOrPath: string | undefined,
   sessions: Session[] | undefined,
   agents?: readonly { name: string; color?: string }[],
 ) {
-  const parentID = currentSession(path)
-  if (!parentID) return
+  const parentID =
+    parentOrPath && parentOrPath.startsWith("ses")
+      ? parentOrPath
+      : parentOrPath
+        ? currentSession(parentOrPath)
+        : undefined
+  if (!parentID) return undefined
   const description = typeof input.description === "string" ? input.description : ""
   const agent = taskAgent(input.subagent_type, agents).name
   return (sessions ?? [])
@@ -620,6 +625,7 @@ function taskSession(
     .filter((session) => (agent ? session.title.includes(`@${agent}`) : true))
     .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0))[0]?.id
 }
+
 
 const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
 const HIDDEN_TOOLS = new Set(["todowrite"])
@@ -1581,7 +1587,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   })
   const taskHref = createMemo(() => {
     if (part().tool !== "task") return
-    return sessionLink(taskId(), useLocation().pathname, data.sessionHref)
+    return sessionLink(taskId(), undefined, data.sessionHref)
   })
   const taskSubtitle = createMemo(() => {
     if (part().tool !== "task") return undefined
@@ -1620,6 +1626,14 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
                   onOpenChange={props.onToolOpenChange ? handleToolOpenChange : undefined}
                   subtitle={taskSubtitle()}
                   href={taskHref()}
+                  onSubtitleClick={(event) => {
+                    if (!data.navigateToSession) return
+                    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+                    const id = taskId()
+                    if (!id) return
+                    event.preventDefault()
+                    data.navigateToSession(id)
+                  }}
                 />
               )
             }}
@@ -2000,11 +2014,10 @@ ToolRegistry.register({
   render(props) {
     const data = useData()
     const i18n = useI18n()
-    const location = useLocation()
     const childSessionId = createMemo(() => {
-      const value = asSessionID(props.metadata.sessionId)
+const value = asSessionID(props.metadata.sessionId)
       if (value) return value
-      return taskSession(props.input, location.pathname, data.store.session, data.store.agent)
+      return taskSession(props.input, data.sessionID, data.store.session, data.store.agent)
     })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
     const title = createMemo(() => agent().name ?? i18n.t("ui.tool.agent.default"))
@@ -2021,18 +2034,13 @@ ToolRegistry.register({
     })
     const running = createMemo(() => props.status === "pending" || props.status === "running")
 
-    const href = createMemo(() => sessionLink(childSessionId(), location.pathname, data.sessionHref))
+    const href = createMemo(() => sessionLink(childSessionId(), undefined, data.sessionHref))
     const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
 
     const open = () => {
       const id = childSessionId()
       if (!id) return
-      if (data.navigateToSession) {
-        data.navigateToSession(id)
-        return
-      }
-      const value = href()
-      if (value) window.location.assign(value)
+      data.navigateToSession?.(id)
     }
 
     const navigate = (event: MouseEvent) => {

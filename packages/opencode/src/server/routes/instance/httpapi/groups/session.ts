@@ -81,6 +81,7 @@ export const SessionPaths = {
   get: `${root}/:sessionID`,
   children: `${root}/:sessionID/children`,
   todo: `${root}/:sessionID/todo`,
+  updateTodo: `${root}/:sessionID/todo`,
   diff: `${root}/:sessionID/diff`,
   messages: `${root}/:sessionID/message`,
   message: `${root}/:sessionID/message/:messageID`,
@@ -163,6 +164,22 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.todo",
             summary: "Get session todos",
             description: "Retrieve the todo list associated with a specific session, showing tasks and action items.",
+          }),
+        ),
+        HttpApiEndpoint.post("updateTodo", SessionPaths.updateTodo, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: Schema.Struct({
+            todos: Schema.Array(Todo.Info),
+          }),
+          success: described(Schema.Array(Todo.Info), "Updated todo list"),
+          error: [HttpApiError.BadRequest, ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.updateTodo",
+            summary: "Update session todos",
+            description:
+              "Replace the session todo list (full replace). Use an empty array to clear. Statuses are normalized to pending|in_progress|completed|cancelled.",
           }),
         ),
         HttpApiEndpoint.get("diff", SessionPaths.diff, {

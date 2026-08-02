@@ -14,6 +14,7 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
+import { cancelInProgressTodos, normalizeTodoItem, todosChanged } from "@/session/todo-normalize"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
@@ -231,7 +232,23 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
 
     const abort = Effect.fn("SessionHttpApi.abort")(function* (ctx: { params: { sessionID: SessionID } }) {
       yield* promptSvc.cancel(ctx.params.sessionID)
+      // Close stuck in_progress items so the todo dock can settle after user abort.
+      const existing = yield* todoSvc.get(ctx.params.sessionID)
+      const next = cancelInProgressTodos(existing)
+      if (todosChanged(existing, next)) {
+        yield* todoSvc.update({ sessionID: ctx.params.sessionID, todos: next })
+      }
       return true
+    })
+
+    const updateTodo = Effect.fn("SessionHttpApi.updateTodo")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: { todos: ReadonlyArray<Todo.Info> }
+    }) {
+      yield* requireSession(ctx.params.sessionID)
+      const todos = ctx.payload.todos.map((item) => normalizeTodoItem(item))
+      yield* todoSvc.update({ sessionID: ctx.params.sessionID, todos })
+      return todos
     })
 
     const init = Effect.fn("SessionHttpApi.init")(function* (ctx: {
@@ -471,6 +488,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("get", get)
       .handle("children", children)
       .handle("todo", todo)
+      .handle("updateTodo", updateTodo)
       .handle("diff", diff)
       .handle("messages", messages)
       .handle("message", message)

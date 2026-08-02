@@ -7,7 +7,7 @@ import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { TextStrikethrough } from "@opencode-ai/ui/text-strikethrough"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
-import { Index, createEffect, createMemo } from "solid-js"
+import { Index, Show, createEffect, createMemo } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
@@ -48,6 +48,10 @@ export function SessionTodoDock(props: {
   collapseLabel: string
   expandLabel: string
   dockProgress: number
+  /** Persist-clear checklist (empty todowrite / updateTodo) */
+  onClear?: () => void
+  clearLabel?: string
+  clearing?: boolean
 }) {
   const language = useLanguage()
   const settings = useSettings()
@@ -177,7 +181,25 @@ export function SessionTodoDock(props: {
               truncate
             />
           </div>
-          <div class="ml-auto">
+          <div class="ml-auto flex items-center gap-1">
+            <Show when={props.onClear && props.todos.length > 0}>
+              <IconButton
+                data-action="session-todo-clear-button"
+                icon="close"
+                size="normal"
+                variant="ghost"
+                disabled={props.clearing}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  props.onClear?.()
+                }}
+                aria-label={props.clearLabel ?? "Clear todos"}
+              />
+            </Show>
             <IconButton
               data-action="session-todo-toggle-button"
               data-collapsed={props.collapsed ? "true" : "false"}

@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import DESCRIPTION_WRITE from "./todowrite.txt"
 import { Todo } from "../session/todo"
+import { normalizeTodoItem } from "../session/todo-normalize"
 
 export const Parameters = Schema.Struct({
   todos: Schema.mutable(Schema.Array(Todo.Info)).annotate({ description: "The updated todo list" }),
@@ -28,16 +29,20 @@ export const TodoWriteTool = Tool.define<typeof Parameters, Metadata, Todo.Servi
             metadata: {},
           })
 
+          const todos = params.todos.map((item) => normalizeTodoItem(item))
+
           yield* todo.update({
             sessionID: ctx.sessionID,
-            todos: params.todos,
+            todos,
           })
 
+          const open = todos.filter((x) => x.status !== "completed" && x.status !== "cancelled").length
+
           return {
-            title: `${params.todos.filter((x) => x.status !== "completed").length} todos`,
-            output: JSON.stringify(params.todos, null, 2),
+            title: open === 0 ? (todos.length === 0 ? "cleared todos" : "todos closed") : `${open} open todos`,
+            output: JSON.stringify(todos, null, 2),
             metadata: {
-              todos: params.todos,
+              todos,
             },
           }
         }),

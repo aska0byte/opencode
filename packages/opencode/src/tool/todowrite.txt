@@ -24,10 +24,14 @@ Skip when:
 ## Rules
 - Update status in real time; don't batch completions
 - Mark `completed` only after the required work is actually done, including any required verification. Never based on intent.
-- Keep exactly one `in_progress` while work remains
+- Keep exactly one `in_progress` while work remains (unless intentionally running a parallel wave — then finish and mark completed promptly)
 - If blocked or partial, keep it `in_progress` and add a follow-up todo describing the blocker
 - Preserve user-provided commands verbatim (flags, args, order)
 - Items should be specific and actionable; break large work into smaller steps
+- **Full replace:** each call replaces the entire session todo list. Always send the complete intended list.
+- **Closing the list:** when goals change, the user aborts, or items are obsolete, mark them `cancelled` or omit them from the replacement list. Use `todos: []` to clear the list when nothing remains open.
+- **Statuses only:** `pending`, `in_progress`, `completed`, `cancelled` — never invent `done` / `finished` / etc.
+- After subagents finish work, the **parent** session must update todos (subagents usually cannot).
 
 ## Examples
 

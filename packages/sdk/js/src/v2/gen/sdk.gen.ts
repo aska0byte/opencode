@@ -3665,6 +3665,50 @@ export class Session2 extends HeyApiClient {
   }
 
   /**
+   * Update session todos
+   *
+   * Replace the session todo list (full replace). Use an empty array to clear.
+   * Local extension for closable checklists (opencode-super / app clear control).
+   */
+  public updateTodo<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      todos?: Array<{
+        content: string
+        status: string
+        priority: string
+      }>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "todos" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionTodoResponses, SessionTodoErrors, ThrowOnError>({
+      url: "/session/{sessionID}/todo",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
    * Get message diff
    *
    * Get the file changes (diff) that resulted from a specific user message in the session.

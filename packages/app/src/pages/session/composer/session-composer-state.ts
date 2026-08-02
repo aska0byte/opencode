@@ -111,6 +111,7 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     dock: todos().length > 0 && !done() && live(),
     closing: false,
     opening: false,
+    clearingTodos: false,
   })
 
   const permissionResponding = createMemo(() => {
@@ -158,11 +159,49 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     }, closeMs())
   }
 
-  // Keep stale turn todos from reopening if the model never clears them.
+  // Keep stale turn todos from reopening if the model never clears them (local UI only).
   const clear = () => {
     const id = params.id
     if (!id) return
+    serverSync().session.set("todo", id, [])
     sync().set("todo", id, [])
+  }
+
+  /** User-driven clear: persist empty list then hide dock. */
+  const clearTodos = () => {
+    const id = params.id
+    if (!id || store.clearingTodos) return
+    setStore("clearingTodos", true)
+    const directory = sdk().directory
+    const client = sdk().client as {
+      session: {
+        updateTodo?: (input: {
+          sessionID: string
+          directory?: string
+          todos: Todo[]
+        }) => Promise<unknown>
+      }
+    }
+    const run =
+      typeof client.session.updateTodo === "function"
+        ? client.session.updateTodo({ sessionID: id, directory, todos: [] })
+        : Promise.resolve()
+    void run
+      .then(() => {
+        clear()
+        if (timer) window.clearTimeout(timer)
+        timer = undefined
+        setStore({ dock: false, closing: false, opening: false })
+      })
+      .catch((err: unknown) => {
+        showToast({
+          title: language.t("session.todo.clear.failed"),
+          description: errorMessage(err),
+        })
+      })
+      .finally(() => {
+        setStore("clearingTodos", false)
+      })
   }
 
   createEffect(
@@ -240,6 +279,8 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     permissionResponding,
     decide,
     todos,
+    clearTodos,
+    clearingTodos: () => store.clearingTodos,
     dock: () =>
       store.sessionID === params.id
         ? store.dock

@@ -677,6 +677,8 @@ export const dict = {
   "session.todo.collapse": "Collapse",
   "session.todo.expand": "Expand",
   "session.todo.progress": "{{done}} of {{total}} todos completed",
+  "session.todo.clear": "Clear todos",
+  "session.todo.clear.failed": "Failed to clear todos",
   "session.question.progress": "{{current}} of {{total}} questions",
   "session.question.minimize": "Minimize question",
   "session.question.restore": "Restore question",

@@ -78,6 +78,9 @@ export function SessionComposerRegion(props: {
                   collapseLabel={language.t("session.todo.collapse")}
                   expandLabel={language.t("session.todo.expand")}
                   dockProgress={controller.dockProgress()}
+                  onClear={controller.state.clearTodos}
+                  clearLabel={language.t("session.todo.clear")}
+                  clearing={controller.state.clearingTodos()}
                 />
               </div>
             </div>

@@ -8,6 +8,7 @@ import {
   bootstrapDirectory,
   loadAgentsQuery,
   loadCommands,
+  loadGlobalConfigQuery,
   loadPathQuery,
   loadProjectsQuery,
   loadProvidersQuery,
@@ -76,6 +77,7 @@ function directoryState() {
 
 describe("bootstrapDirectory", () => {
   test("uses legacy MCP endpoints while refreshing a v1 directory", async () => {
+    const legacyConfigReads: string[] = []
     const mcpReads: string[] = []
     const [store, setStore] = directoryState()
 
@@ -91,7 +93,12 @@ describe("bootstrapDirectory", () => {
       },
       sdk: {
         app: { agents: async () => ({ data: [{ name: "build", mode: "primary" }] }) },
-        config: { get: async () => ({ data: {} }) },
+        config: {
+          get: async () => {
+            legacyConfigReads.push("directory")
+            return { data: {} }
+          },
+        },
         session: { status: async () => ({ data: {} }) },
         vcs: { get: async () => ({ data: undefined }) },
         command: {
@@ -134,32 +141,17 @@ describe("bootstrapDirectory", () => {
     await new Promise((resolve) => setTimeout(resolve, 80))
 
     expect(store.status).toBe("complete")
+    expect(legacyConfigReads).toEqual(["directory"])
     expect(mcpReads.sort()).toEqual(["command", "resource", "status"])
   })
 
-  test("loads mcp status via legacy sdk when protocol is v1", async () => {
-    // given: directory-sync path (mcp:true) against a v1 server that only exposes /mcp, not /api/mcp
-    const calls: string[] = []
+  test("skips legacy config while refreshing a v2 directory", async () => {
     const [store, setStore] = directoryState()
-    const mcpApi = {
-      list: async () => {
-        calls.push("api.mcp.list")
-        throw new Error("v2 mcp.list must not be used on protocol v1")
-      },
-      resource: {
-        catalog: async () => {
-          calls.push("api.mcp.resource.catalog")
-          throw new Error("v2 mcp.resource.catalog must not be used on protocol v1")
-        },
-      },
-    }
 
-    // when: bootstrap runs with mcp enabled and protocol resolved to v1
     await bootstrapDirectory({
       directory: "/project",
       scope: ServerScope.local,
-      mcp: true,
-      protocol: Promise.resolve("v1"),
+      mcp: false,
       global: {
         config: {} satisfies Config,
         path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
@@ -167,51 +159,69 @@ describe("bootstrapDirectory", () => {
         provider,
       },
       sdk: {
-        app: { agents: async () => ({ data: [{ name: "build", mode: "primary" }] }) },
-        config: { get: async () => ({ data: {} }) },
-        vcs: { get: async () => ({ data: undefined }) },
-        command: { list: async () => ({ data: [] }) },
-        permission: { list: async () => ({ data: [] }) },
-        question: { list: async () => ({ data: [] }) },
-        session: { status: async () => ({ data: {} }) },
-        v2: { reference: { list: async () => ({ data: { data: [] } }) } },
-        mcp: {
-          status: async () => {
-            calls.push("sdk.mcp.status")
-            return { data: { demo: { status: "connected" } } }
+        config: {
+          get: async () => {
+            throw new Error("legacy directory config should not be called")
           },
         },
-        experimental: {
-          resource: {
-            list: async () => {
-              calls.push("sdk.experimental.resource.list")
-              return { data: {} }
-            },
-          },
-        },
-        provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
       } as unknown as OpencodeClient,
-      api: {
-        ...api,
-        command: { list: async () => ({ location: {}, data: [] }) },
-        mcp: mcpApi,
-      } as unknown as ServerApi,
+      api,
       store,
       setStore,
       vcsCache: { setStore() {} } as unknown as VcsCache,
       loadSessions() {},
       translate: (key) => key,
       queryClient: new QueryClient(),
+      protocol: Promise.resolve("v2"),
     })
+
+    expect(store.status).toBe("partial")
 
     await new Promise((resolve) => setTimeout(resolve, 80))
 
-    // then: legacy mcp endpoints are used; v2 /api/mcp path is never hit
     expect(store.status).toBe("complete")
-    expect(calls).toContain("sdk.mcp.status")
-    expect(calls).toContain("sdk.experimental.resource.list")
-    expect(calls).not.toContain("api.mcp.list")
-    expect(calls).not.toContain("api.mcp.resource.catalog")
+  })
+})
+
+describe("config queries", () => {
+  test("skips legacy global config for v2 servers", async () => {
+    const sdk = {
+      global: {
+        config: {
+          get: async () => {
+            throw new Error("legacy global config should not be called")
+          },
+        },
+      },
+    } as unknown as OpencodeClient
+
+    const result = await new QueryClient().fetchQuery(
+      loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v2")),
+    )
+
+    expect(result).toEqual({})
+  })
+
+  test("loads legacy global config for v1 servers", async () => {
+    const calls: string[] = []
+    const config = { shell: "zsh" } satisfies Config
+    const sdk = {
+      global: {
+        config: {
+          get: async () => {
+            calls.push("global")
+            return { data: config }
+          },
+        },
+      },
+    } as unknown as OpencodeClient
+
+    const result = await new QueryClient().fetchQuery(
+      loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v1")),
+    )
+
+    expect(result).toEqual(config)
+    expect(calls).toEqual(["global"])
   })
 })
 

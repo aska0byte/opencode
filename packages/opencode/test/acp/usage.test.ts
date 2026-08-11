@@ -207,7 +207,7 @@ describe("acp usage", () => {
     )
   })
 
-  it.effect("sends ACP usage_update with context size and cumulative assistant cost", () => {
+  it.effect("includes cache reads and writes in ACP context usage", () => {
     const updates: SessionNotification[] = []
     return Effect.gen(function* () {
       const usage = yield* UsageService.Service
@@ -222,7 +222,7 @@ describe("acp usage", () => {
           sessionId: "ses_1",
           update: {
             sessionUpdate: "usage_update",
-            used: 35, // input(10) + output(20) + reasoning(0) + cache.read(5) + cache.write(0)
+            used: 42, // input(10)+output(20)+reasoning(0)+cache.read(5)+cache.write(7) via getCurrentContextTokens
             size: 128_000,
             cost: { amount: 3, currency: "USD" },
           },
@@ -239,7 +239,7 @@ describe("acp usage", () => {
                 input: 10,
                 output: 20,
                 reasoning: 0,
-                cache: { read: 5, write: 0 },
+                cache: { read: 5, write: 7 },
               },
             }),
           ]),

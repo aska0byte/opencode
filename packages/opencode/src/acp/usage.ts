@@ -84,6 +84,10 @@ export function messageLoaderFromSDK(sdk: SDK): MessageLoaderInterface {
 
 export const messageLoaderLayer = (sdk: SDK) => Layer.succeed(MessageLoader, messageLoaderFromSDK(sdk))
 
+export function contextTokens(message: AssistantTokenCost): number {
+  return message.tokens.input + message.tokens.cache.read + message.tokens.cache.write
+}
+
 export function buildUsage(message: AssistantTokenCost): Usage {
   const cachedReadTokens = message.tokens.cache.read
   const cachedWriteTokens = message.tokens.cache.write

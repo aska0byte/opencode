@@ -48,8 +48,7 @@ export function createPromptInputController(input: {
         paid: providers.paid().length > 0,
         loading:
           (local.agent.visible() && agentsQuery.isLoading) ||
-          providersQuery.isLoading ||
-          globalProvidersQuery.isLoading,
+          (providersQuery.isLoading && globalProvidersQuery.isLoading),
       },
       session: {
         id: input.sessionID(),

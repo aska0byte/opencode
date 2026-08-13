@@ -83,6 +83,9 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 const EMPTY_RESPONSE_RETRY_LIMIT = 2
+const IDLE_CONTINUE_LIMIT = 2
+const IDLE_CONTINUE_PROMPT =
+  "The previous model stream went idle with no in-flight tools or child work. Continue from the last unfinished step."
 
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
@@ -136,6 +139,24 @@ function hasCompactionContinueMetadata(msg: SessionV1.WithParts | undefined) {
     msg?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.compaction_continue === true) ??
     false
   )
+}
+
+function hasIdleContinueMetadata(msg: SessionV1.WithParts | undefined) {
+  return (
+    msg?.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.idle_continue === true) ?? false
+  )
+}
+
+function isTrueIdleEmptyTurn(input: {
+  result: "compact" | "stop" | "continue"
+  info: SessionV1.Assistant
+  isEmpty: boolean
+}) {
+  if (input.result !== "continue") return false
+  if (!input.isEmpty) return false
+  if (input.info.error) return false
+  if (input.info.finish) return false
+  return true
 }
 
 function isAutomaticCompactionContinuation(msgs: SessionV1.WithParts[], lastUserMsg: SessionV1.WithParts | undefined) {
@@ -1211,6 +1232,7 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        let idleContinues = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         let stepStartedAt = Date.now()
@@ -1473,6 +1495,7 @@ const layer = Layer.effect(
               isEmpty = isEmptyAssistantResponse(handle.message, currentParts)
               if (!isEmpty) break
               if (result !== "continue") break
+              if (isTrueIdleEmptyTurn({ result, info: handle.message, isEmpty })) break
               if (isCompactionContinuePrompt) break
               if (isCompactionContinue) break
               if (hasPreRequestContextPressure || hasContextPressure(msgs, model, cfg)) break
@@ -1548,6 +1571,42 @@ const layer = Layer.effect(
                   overflow: true,
                 })
                 yield* handleAutoCompactionCreateResult(sessionID, compact)
+                return "continue" as const
+              }
+
+              if (isTrueIdleEmptyTurn({ result, info: handle.message, isEmpty })) {
+                if (hasIdleContinueMetadata(lastUserMsg)) idleContinues += 1
+                else idleContinues = 1
+                if (idleContinues > IDLE_CONTINUE_LIMIT) {
+                  handle.message.error = new NamedError.Unknown({
+                    message: `Model stream stayed idle with no in-flight work after ${IDLE_CONTINUE_LIMIT} automatic continues; stopping.`,
+                  }).toObject()
+                  handle.message.finish = "error"
+                  yield* sessions.updateMessage(handle.message)
+                  return "break" as const
+                }
+                const idleUser: SessionV1.User = {
+                  id: MessageID.ascending(),
+                  sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                }
+                yield* sessions.updateMessage(idleUser)
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: idleUser.id,
+                  sessionID,
+                  type: "text",
+                  text: IDLE_CONTINUE_PROMPT,
+                  synthetic: true,
+                  metadata: { idle_continue: true },
+                  time: {
+                    start: Date.now(),
+                    end: Date.now(),
+                  },
+                } satisfies SessionV1.TextPart)
                 return "continue" as const
               }
 

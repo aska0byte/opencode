@@ -1200,6 +1200,166 @@ it.live("session.processor effect tests record aborted errors and idle state", (
   ),
 )
 
+const idleHangLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () => Stream.never,
+  }),
+)
+const idleHangEnv = LayerNode.compile(root, [...replacements, [LLM.node, idleHangLLM]])
+const itIdleHang = testEffect(idleHangEnv)
+
+const idleWhileToolLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.concat(
+        Stream.make(
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolInputStart({ id: "call-active", name: "lookup" }),
+          LLMEvent.toolCall({ id: "call-active", name: "lookup", input: { query: "x" } }),
+        ),
+        Stream.never,
+      ),
+  }),
+)
+const idleWhileToolEnv = LayerNode.compile(root, [...replacements, [LLM.node, idleWhileToolLLM]])
+const itIdleWhileTool = testEffect(idleWhileToolEnv)
+
+itIdleHang.live("session.processor effect tests true idle returns continue without fatal error", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS = "80"
+        const database = yield* Database.Service
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "idle continue")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies SessionV1.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "idle continue" }],
+          tools: {},
+        })
+
+        const stored = yield* MessageV2.get({ sessionID: chat.id, messageID: msg.id }).pipe(
+          Effect.provideService(Database.Service, database),
+        )
+
+        expect(value).toBe("continue")
+        expect(handle.message.error).toBeUndefined()
+        expect(stored.info.role).toBe("assistant")
+        if (stored.info.role === "assistant") {
+          expect(stored.info.error).toBeUndefined()
+          expect(stored.info.time.completed).toBeDefined()
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS
+          }),
+        ),
+      ),
+    { config: cfg },
+  ),
+)
+
+itIdleWhileTool.live("session.processor effect tests in-flight tool is not aborted by idle clock", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS = "80"
+        const database = yield* Database.Service
+        const { processors, session, provider } = yield* boot()
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "active tool")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const run = yield* handle
+          .process({
+            user: {
+              id: parent.id,
+              sessionID: chat.id,
+              role: "user",
+              time: parent.time,
+              agent: parent.agent,
+              model: { providerID: ref.providerID, modelID: ref.modelID },
+            } satisfies SessionV1.User,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "active tool" }],
+            tools: {},
+          })
+          .pipe(Effect.forkChild)
+
+        yield* waitFor(
+          MessageV2.parts(msg.id).pipe(
+            Effect.map((parts) => parts.find((part): part is SessionV1.ToolPart => part.type === "tool")),
+            Effect.provideService(Database.Service, database),
+          ),
+          "timed out waiting for tool part",
+        )
+
+        const raced = yield* Effect.race(
+          Fiber.await(run).pipe(Effect.map((exit) => ({ done: true as const, exit }))),
+          Effect.sleep("200 millis").pipe(Effect.map(() => ({ done: false as const }))),
+        )
+        expect(raced.done).toBe(false)
+
+        const mid = yield* MessageV2.parts(msg.id).pipe(Effect.provideService(Database.Service, database))
+        const open = mid.find((part): part is SessionV1.ToolPart => part.type === "tool")
+        expect(open?.state.status === "running" || open?.state.status === "pending").toBe(true)
+        expect(handle.message.error).toBeUndefined()
+
+        yield* Fiber.interrupt(run)
+        const exit = yield* Fiber.await(run)
+        const parts = yield* MessageV2.parts(msg.id).pipe(Effect.provideService(Database.Service, database))
+        const call = parts.find((part): part is SessionV1.ToolPart => part.type === "tool")
+
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(call?.state.status).toBe("error")
+        if (call?.state.status === "error") {
+          expect(call.state.error).toBe("Tool execution aborted")
+          expect(call.state.metadata?.interrupted).toBe(true)
+          expect(call.state.metadata?.handoffTimeout).not.toBe(true)
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            delete process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS
+          }),
+        ),
+      ),
+    { config: cfg },
+  ),
+)
+
 it.live("session.processor effect tests mark interruptions aborted without manual abort", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

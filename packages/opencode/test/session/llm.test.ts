@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import path from "path"
 import { tool, type ModelMessage } from "ai"
-import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
+import { Cause, Duration, Effect, Exit, Fiber, Layer, Stream } from "effect"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import z from "zod"
@@ -84,6 +84,12 @@ function llmLayerWithExecutor(
     ...(options.executor ? ([[LayerNodePlatform.requestExecutor, options.executor]] as const) : []),
   ])
 }
+
+describe("session.llm idle timeout constant", () => {
+  test("keeps 180s as processor default after removing stream timeout", () => {
+    expect(Duration.toMillis(LLM.LLM_STREAM_IDLE_TIMEOUT)).toBe(180_000)
+  })
+})
 
 describe("session.llm.hasToolCalls", () => {
   test("returns false for empty messages array", () => {

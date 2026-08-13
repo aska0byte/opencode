@@ -30,9 +30,19 @@ import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { recordStep } from "@opencode-ai/usage-stats/service"
 
 const DOOM_LOOP_THRESHOLD = 3
-/** Handoff wait after stream drain for still-pending tools (not tool execute duration). */
+/** Handoff wait after stream drain for leftover tools that never produced a result. */
 export function toolResultHandoffTimeoutMs(): number {
   const raw = process.env.OPENCODE_TOOL_HANDOFF_TIMEOUT_MS
+  if (raw !== undefined && raw !== "") {
+    const ms = Number(raw)
+    if (Number.isFinite(ms) && ms >= 0) return Math.floor(ms)
+  }
+  return Duration.toMillis(LLM.LLM_STREAM_IDLE_TIMEOUT)
+}
+
+/** True-idle budget while the LLM stream emits no events and no tools are in flight. */
+export function llmStreamIdleTimeoutMs(): number {
+  const raw = process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS
   if (raw !== undefined && raw !== "") {
     const ms = Number(raw)
     if (Number.isFinite(ms) && ms >= 0) return Math.floor(ms)
@@ -85,6 +95,7 @@ interface ProcessorContext extends Input {
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
+  idleTimedOut: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
 }
@@ -124,6 +135,7 @@ const layer = Layer.effect(
         snapshot: initialSnapshot,
         blocked: false,
         needsCompaction: false,
+        idleTimedOut: false,
         currentText: undefined,
         reasoningMap: {},
       }
@@ -762,61 +774,76 @@ const layer = Layer.effect(
         }
         ctx.reasoningMap = {}
 
-        // Normal turn: wait for tools to settle (upstream #27850 direction),
-        // but bound the post-stream handoff wait so a missing tool-result cannot hang forever.
-        // Explicit interrupt keeps the 250ms fast-abort path.
+        // Short settle only. Long leftover waits live in waitForLeftoverTools
+        // (interruptible) so Stop is not stuck inside Effect.ensuring.
         const cleanupDetails = SessionDiagnostics.streamDetails({
           sessionID: ctx.sessionID,
           messageID: ctx.assistantMessage.id,
           providerID: ctx.model.providerID,
           modelID: ctx.model.id,
         })
-        if (!aborted) {
-          const pending = Object.keys(ctx.toolcalls).length
-          if (pending > 0) {
-            SessionDiagnostics.markStreamCleanupWait(cleanupDetails, pending)
-            const timeoutMs = toolResultHandoffTimeoutMs()
-            const timedOut = yield* Effect.forEach(Object.values(ctx.toolcalls), (call) => Deferred.await(call.done), {
-              concurrency: "unbounded",
-              discard: true,
-            }).pipe(
-              Effect.as(false),
-              Effect.timeoutOrElse({
-                duration: `${timeoutMs} millis`,
-                orElse: () => Effect.succeed(true),
-              }),
-            )
-            if (timedOut) {
-              const remaining = Object.keys(ctx.toolcalls).length
-              SessionDiagnostics.markStreamCleanupTimeout(cleanupDetails, remaining, timeoutMs)
-              for (const toolCallID of Object.keys(ctx.toolcalls)) {
-                const match = yield* readToolCall(toolCallID)
-                if (!match) continue
-                const part = match.part
-                const end = Date.now()
-                const metadata = openToolMetadata(part)
-                yield* session.updatePart({
-                  ...part,
-                  state: {
-                    status: "error",
-                    input: openToolInput(part, match.call.lastInput),
-                    error: "Tool result handoff timed out",
-                    metadata: { ...metadata, handoffTimeout: true, interrupted: false },
-                    time: { start: openToolStart(part), end },
-                  },
-                })
-                yield* settleToolCall(toolCallID)
-              }
-            }
-            SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, Object.keys(ctx.toolcalls).length, timedOut)
-          }
-        } else {
-          yield* Effect.forEach(
-            Object.values(ctx.toolcalls),
-            (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
-            { concurrency: "unbounded" },
-          )
+        yield* Effect.forEach(
+          Object.values(ctx.toolcalls),
+          (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
+          { concurrency: "unbounded" },
+        )
+        for (const toolCallID of Object.keys(ctx.toolcalls)) {
+          const match = yield* readToolCall(toolCallID)
+          if (!match) continue
+          const part = match.part
+          const end = Date.now()
+          const metadata = openToolMetadata(part)
+          yield* session.updatePart({
+            ...part,
+            state: aborted
+              ? {
+                  status: "error",
+                  input: openToolInput(part, match.call.lastInput),
+                  error: "Tool execution aborted",
+                  metadata: { ...metadata, interrupted: true },
+                  time: { start: openToolStart(part), end },
+                }
+              : {
+                  status: "error",
+                  input: openToolInput(part, match.call.lastInput),
+                  error: "Tool result handoff timed out",
+                  metadata: { ...metadata, handoffTimeout: true, interrupted: false },
+                  time: { start: openToolStart(part), end },
+                },
+          })
+          yield* settleToolCall(toolCallID)
+        }
+        SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, 0, false)
+        ctx.toolcalls = {}
+        ctx.assistantMessage.time.completed = Date.now()
+        yield* session.updateMessage(ctx.assistantMessage)
+      })
 
+      const waitForLeftoverTools = Effect.fn("SessionProcessor.waitForLeftoverTools")(function* () {
+        if (aborted) return
+        const pending = Object.keys(ctx.toolcalls).length
+        if (pending <= 0) return
+        const cleanupDetails = SessionDiagnostics.streamDetails({
+          sessionID: ctx.sessionID,
+          messageID: ctx.assistantMessage.id,
+          providerID: ctx.model.providerID,
+          modelID: ctx.model.id,
+        })
+        SessionDiagnostics.markStreamCleanupWait(cleanupDetails, pending)
+        const timeoutMs = toolResultHandoffTimeoutMs()
+        const timedOut = yield* Effect.forEach(Object.values(ctx.toolcalls), (call) => Deferred.await(call.done), {
+          concurrency: "unbounded",
+          discard: true,
+        }).pipe(
+          Effect.as(false),
+          Effect.timeoutOrElse({
+            duration: `${timeoutMs} millis`,
+            orElse: () => Effect.succeed(true),
+          }),
+        )
+        if (timedOut) {
+          const remaining = Object.keys(ctx.toolcalls).length
+          SessionDiagnostics.markStreamCleanupTimeout(cleanupDetails, remaining, timeoutMs)
           for (const toolCallID of Object.keys(ctx.toolcalls)) {
             const match = yield* readToolCall(toolCallID)
             if (!match) continue
@@ -828,18 +855,15 @@ const layer = Layer.effect(
               state: {
                 status: "error",
                 input: openToolInput(part, match.call.lastInput),
-                error: "Tool execution aborted",
-                metadata: { ...metadata, interrupted: true },
+                error: "Tool result handoff timed out",
+                metadata: { ...metadata, handoffTimeout: true, interrupted: false },
                 time: { start: openToolStart(part), end },
               },
             })
             yield* settleToolCall(toolCallID)
           }
-          SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, 0, false)
         }
-        ctx.toolcalls = {}
-        ctx.assistantMessage.time.completed = Date.now()
-        yield* session.updateMessage(ctx.assistantMessage)
+        SessionDiagnostics.markStreamCleanupEnd(cleanupDetails, Object.keys(ctx.toolcalls).length, timedOut)
       })
 
       const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown) {
@@ -876,6 +900,7 @@ const layer = Layer.effect(
           messageID: input.assistantMessage.id,
         })
         ctx.needsCompaction = false
+        ctx.idleTimedOut = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
         return yield* Effect.gen(function* () {
@@ -907,9 +932,12 @@ const layer = Layer.effect(
               streamDetails,
               Effect.gen(function* () {
                 SessionDiagnostics.markStreamDrainStart(streamDetails)
-                yield* stream.pipe(
+                let lastEventAt = Date.now()
+                const idleBudgetMs = llmStreamIdleTimeoutMs()
+                const drain = stream.pipe(
                   Stream.tap((event) =>
                     Effect.gen(function* () {
+                      lastEventAt = Date.now()
                       eventCount += 1
                       const eventType = SessionDiagnostics.eventType(event)
                       eventTypes[eventType] = (eventTypes[eventType] ?? 0) + 1
@@ -920,21 +948,55 @@ const layer = Layer.effect(
                       yield* handleEvent(event)
                     }),
                   ),
-                  Stream.takeUntil(() => ctx.needsCompaction),
+                  Stream.takeUntil(() => ctx.needsCompaction || ctx.idleTimedOut),
                   Stream.runDrain,
                 )
+                const watchdog =
+                  idleBudgetMs <= 0
+                    ? Effect.never
+                    : Effect.gen(function* () {
+                        while (!ctx.needsCompaction && !aborted && !ctx.idleTimedOut) {
+                          yield* Effect.sleep("50 millis")
+                          if (Object.keys(ctx.toolcalls).length > 0) continue
+                          if (Date.now() - lastEventAt < idleBudgetMs) continue
+                          ctx.idleTimedOut = true
+                          return
+                        }
+                      })
+                yield* Effect.raceFirst(drain, watchdog)
                 SessionDiagnostics.markStreamDrainEnd(
                   streamDetails,
                   eventCount,
                   ctx.needsCompaction,
                   Object.keys(eventTypes).length,
                 )
-                progressReason = ctx.needsCompaction ? "compact" : "drain-end"
+                if (ctx.idleTimedOut) {
+                  progressReason = "idle-timeout"
+                  SessionDiagnostics.markStreamInterrupted(streamDetails, "idle-timeout")
+                } else {
+                  progressReason = ctx.needsCompaction ? "compact" : "drain-end"
+                }
               }),
             )
+            if (!aborted && !ctx.idleTimedOut) {
+              yield* waitForLeftoverTools()
+            }
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {
+                if (ctx.idleTimedOut) {
+                  progressReason = "idle-timeout"
+                  SessionDiagnostics.markStreamInterrupted(
+                    SessionDiagnostics.streamDetails({
+                      sessionID: ctx.sessionID,
+                      messageID: ctx.assistantMessage.id,
+                      providerID: ctx.model.providerID,
+                      modelID: ctx.model.id,
+                    }),
+                    "idle-timeout",
+                  )
+                  return
+                }
                 aborted = true
                 progressReason = "interrupt"
                 SessionDiagnostics.markStreamInterrupted(
@@ -973,7 +1035,6 @@ const layer = Layer.effect(
             Effect.tapError((error) =>
               Effect.sync(() => {
                 const message = errorMessage(error)
-                // Stream.timeout from LLM layer surfaces as TimeoutException / timeout text.
                 if (/timeout/i.test(message)) {
                   progressReason = "idle-timeout"
                   SessionDiagnostics.markStreamInterrupted(

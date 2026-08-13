@@ -3484,6 +3484,44 @@ it.instance("stops repeated empty unknown responses after auto-compaction", () =
   }),
 )
 
+it.instance("continues the model after a true-idle empty stream", () =>
+  Effect.gen(function* () {
+    process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS = "80"
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({ title: "Prompt idle continue" })
+
+    yield* llm.hang
+    yield* llm.text("resumed after idle")
+
+    const result = yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      parts: [{ type: "text", text: "Keep going" }],
+    })
+
+    expect(result.info.role).toBe("assistant")
+    expect(result.parts.some((part) => part.type === "text" && part.text === "resumed after idle")).toBe(true)
+    expect(yield* llm.calls).toBe(2)
+
+    const messages = yield* sessions.messages({ sessionID: session.id })
+    expect(
+      messages.some(
+        (msg) =>
+          msg.info.role === "user" &&
+          msg.parts.some((part) => part.type === "text" && part.synthetic && part.metadata?.idle_continue === true),
+      ),
+    ).toBe(true)
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        delete process.env.OPENCODE_LLM_STREAM_IDLE_TIMEOUT_MS
+      }),
+    ),
+  ),
+)
+
 it.instance(
   "records aborted errors when prompt is cancelled mid-stream",
   () =>

@@ -420,7 +420,6 @@ const live: Layer.Layer<
                 Stream.tap((event) =>
                   Effect.sync(() => markToolStreamEvent("native", input.sessionID, messageID, event)),
                 ),
-                Stream.timeout(LLM_STREAM_IDLE_TIMEOUT),
               )
             }
 
@@ -430,7 +429,6 @@ const live: Layer.Layer<
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
-              Stream.timeout(LLM_STREAM_IDLE_TIMEOUT),
               Stream.tap((event) =>
                 Effect.sync(() => markToolStreamEvent("ai-sdk", input.sessionID, messageID, event)),
               ),

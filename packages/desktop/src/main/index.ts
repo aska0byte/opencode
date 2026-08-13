@@ -288,7 +288,7 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
-  if (!TEST_ONBOARDING) migrate()
+  if (!TEST_ONBOARDING) migrate({ instanceDir: instanceLayout?.instanceDir })
   yield* Effect.promise(() => cleanupStoreFiles(app.getPath("userData"))).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {

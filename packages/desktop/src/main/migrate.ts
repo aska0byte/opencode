@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { CHANNEL } from "./constants"
+import { shouldSkipHostMigration } from "./portable-migrate"
 import { getStore } from "./store"
 
 const TAURI_MIGRATED_KEY = "tauriMigrated"
@@ -66,7 +67,12 @@ function migrateFile(datPath: string, filename: string) {
   log.log("tauri migration: migrated", filename, "→", storeName, { migrated, skipped })
 }
 
-export function migrate() {
+export function migrate(options?: { instanceDir?: string }) {
+  if (shouldSkipHostMigration(options?.instanceDir)) {
+    log.log("tauri migration: skipped for portable instance", { instanceDir: options?.instanceDir })
+    return
+  }
+
   if (getStore().get(TAURI_MIGRATED_KEY)) {
     log.log("tauri migration: already done, skipping")
     return

@@ -32,6 +32,9 @@ const sentPrompts: string[] = []
 const promptInputs: unknown[] = []
 const sentCommands: unknown[] = []
 const commands: Array<{ name: string }> = []
+const toasts: Array<{ title?: string; description?: string }> = []
+const interruptCalls: Array<{ sessionID: string }> = []
+let interruptError: Error | undefined
 let serverSessionSyncs = 0
 
 let params: { id?: string } = {}
@@ -103,6 +106,10 @@ const clientFor = (directory: string) => {
         shell: async (input: { sessionID: string; id?: string; command: string }) => {
           sentShell.push(input)
         },
+        interrupt: async (input: { sessionID: string }) => {
+          interruptCalls.push(input)
+          if (interruptError) throw interruptError
+        },
       },
     },
     session: {
@@ -135,6 +142,14 @@ beforeAll(async () => {
   mock.module("@opencode-ai/ui/toast", () => ({
     Toast: { Region: () => null },
     showToast: () => 0,
+  }))
+
+  mock.module("@/utils/toast", () => ({
+    showToast: (options: { title?: string; description?: string } | string) => {
+      if (typeof options === "string") toasts.push({ title: options })
+      else toasts.push(options)
+      return 0
+    },
   }))
 
   mock.module("@opencode-ai/core/util/encode", () => ({
@@ -291,6 +306,9 @@ beforeEach(() => {
   promptInputs.length = 0
   sentCommands.length = 0
   commands.length = 0
+  toasts.length = 0
+  interruptCalls.length = 0
+  interruptError = undefined
   promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
   params = {}
   search = {}
@@ -594,5 +612,39 @@ describe("prompt submit worktree selection", () => {
     expect(storedSessions["/repo/worktree-a"]).toHaveLength(1)
     expect(storedSessions["/repo/worktree-a"]?.[0]).toMatchObject({ id: "session-1", title: "New session 1" })
     expect(optimisticSeeded).toEqual([true])
+  })
+})
+
+describe("prompt submit abort", () => {
+  test("shows a toast when session interrupt fails", async () => {
+    params = { id: "session-1" }
+    interruptError = new Error("interrupt refused")
+
+    const submit = createPromptSubmit({
+      prompt,
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => true,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+    })
+
+    await submit.abort()
+
+    expect(interruptCalls).toEqual([{ sessionID: "session-1" }])
+    expect(toasts).toEqual([
+      {
+        title: "prompt.toast.stopFailed.title",
+        description: "interrupt refused",
+      },
+    ])
   })
 })

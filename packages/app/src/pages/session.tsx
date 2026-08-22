@@ -726,6 +726,8 @@ export default function Page() {
     return {
       queryKey: [...vcsKey(), mode] as const,
       enabled,
+      staleTime: 10_000,
+      refetchOnWindowFocus: false,
       queryFn: mode
         ? () =>
             sdk()
@@ -738,7 +740,8 @@ export default function Page() {
         : skipToken,
     }
   })
-  const refreshVcs = debounce(() => void queryClient.invalidateQueries({ queryKey: vcsKey() }), 100)
+  // git diff is expensive server-side; file-change bursts must not hammer /vcs/diff.
+  const refreshVcs = debounce(() => void queryClient.invalidateQueries({ queryKey: vcsKey() }), 3000)
   const reviewDiffs = () => {
     if (reviewMode() === "git" || reviewMode() === "branch")
       // avoids suspense
@@ -1003,6 +1006,11 @@ export default function Page() {
     const originSession =
       typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : undefined
     if (originSession && originSession !== params.id) return
+    if (!wantsReview()) return
+    // While the session is busy the review pane refreshes on the busy→idle transition instead,
+    // so per-file events cannot flood /vcs/diff mid-turn.
+    const status = sync().data.session_status[params.id ?? ""]?.type
+    if (status !== undefined && status !== "idle") return
     refreshVcs()
   })
   onCleanup(stopVcs)

@@ -29,6 +29,18 @@ describe("serverStatusDotClass", () => {
     expect(serverStatusDotClass({ ready: false, serverHealth: true, issue: false })).toBe("bg-border-weak-base")
     expect(serverStatusDotClass({ ready: false, serverHealth: undefined, issue: false })).toBe("bg-border-weak-base")
   })
+
+  test("warns when the event stream stalls while health is fine", () => {
+    expect(serverStatusDotClass({ ready: true, serverHealth: true, issue: false, streamStalled: true })).toBe(
+      "bg-icon-warning-base",
+    )
+  })
+
+  test("critical still wins over a stalled stream", () => {
+    expect(serverStatusDotClass({ ready: true, serverHealth: false, issue: false, streamStalled: true })).toBe(
+      "bg-icon-critical-base",
+    )
+  })
 })
 
 describe("hasNonBlockingServiceIssue", () => {

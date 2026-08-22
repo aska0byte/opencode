@@ -3,7 +3,7 @@ import type { Event } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { type Accessor, batch, createMemo, createResource, onCleanup, onMount } from "solid-js"
+import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
 import { usePlatform } from "./platform"
@@ -178,6 +178,7 @@ type ServerSDKBase = {
     on: ServerEventEmitter["on"]
     listen: ServerEventEmitter["listen"]
     start: () => Promise<void> | undefined
+    stalled: Accessor<boolean>
   }
   createClient: (
     opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
@@ -218,6 +219,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const FLUSH_FRAME_MS = 16
   const STREAM_YIELD_MS = 8
   const RECONNECT_DELAY_MS = 250
+  const [streamStalled, setStreamStalled] = createSignal(false)
 
   let queue: Queued[] = []
   let buffer: Queued[] = []
@@ -257,9 +259,41 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let started = false
   let generation = 0
 
+  // The server emits a heartbeat every ~10s. If no event (heartbeat included)
+  // arrives within this window the connection is considered half-dead: fetch/SSE
+  // can stall silently without throwing, leaving stores permanently stale until
+  // a manual reload. Aborting the attempt makes the connect loop reconnect.
+  const EVENT_WATCHDOG_MS = 35_000
+  const WATCHDOG_TICK_MS = 5_000
+  let lastEventAt = 0
+  let watchdog: ReturnType<typeof setInterval> | undefined
+
+  const clearWatchdog = () => {
+    if (!watchdog) return
+    clearInterval(watchdog)
+    watchdog = undefined
+  }
+
+  const startWatchdog = () => {
+    clearWatchdog()
+    lastEventAt = Date.now()
+    setStreamStalled(false)
+    watchdog = setInterval(() => {
+      if (!started || abort.signal.aborted || !attempt) return
+      const stalled = Date.now() - lastEventAt > EVENT_WATCHDOG_MS
+      setStreamStalled(stalled)
+      if (!stalled) return
+      // Push the deadline out so one stalled stream logs once, not every tick.
+      lastEventAt = Date.now()
+      console.warn("[global-sdk] event stream stalled; forcing reconnect", { url: server.http.url })
+      attempt.abort()
+    }, WATCHDOG_TICK_MS)
+  }
+
   const start = () => {
     if (started) return run
     started = true
+    startWatchdog()
     const active = ++generation
     const previous = run
     const current = (async () => {
@@ -278,8 +312,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               ? (await eventSdk.global.event({ signal: attempt.signal })).stream
               : eventApi.event.subscribe({ signal: attempt.signal })
           let yielded = Date.now()
+          lastEventAt = Date.now()
           for await (const event of events) {
             streamErrorLogged = false
+            lastEventAt = Date.now()
+            setStreamStalled(false)
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
@@ -319,6 +356,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const stop = () => {
     started = false
     generation++
+    clearWatchdog()
     attempt?.abort()
   }
 
@@ -361,6 +399,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
       start,
+      stalled: streamStalled,
     },
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({

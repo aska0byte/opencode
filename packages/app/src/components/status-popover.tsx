@@ -106,12 +106,14 @@ function DirectoryStatusPopover() {
       lsp: (sync().data.lsp ?? []).map((item) => item.status),
     }),
   )
+  const streamStalled = () => server().event.stalled()
   const state = createMemo<StatusPopoverState>(() => ({
     shown: shown(),
     ready: ready(),
     serverHealth: serverHealth(),
     attention: attention(),
     issue: issue(),
+    streamStalled: streamStalled(),
     label: language.t("status.popover.trigger"),
     onOpenChange: setShown,
     body: () => (
@@ -154,6 +156,7 @@ type StatusPopoverState = {
   serverHealth: boolean | undefined
   attention: boolean
   issue: boolean
+  streamStalled?: boolean
   label: string
   onOpenChange: (value: boolean) => void
   body: () => JSX.Element

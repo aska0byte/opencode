@@ -18,6 +18,9 @@ import {
 } from "../../../opencode/src/portable-instance"
 import { checkAppExists, resolveAppPath } from "./apps"
 import { CHANNEL } from "./constants"
+import { resolveStartupCwd } from "./portable-cwd"
+import { writePortableUserDataSeed } from "./portable-seed"
+import { isPortableUpdaterDisabled } from "./portable-updater"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand } from "./ipc"
 import { forwardInitializationFailure } from "./initialization"
 import { exportDebugLogs, initCrashReporter, initLogging, startNetLog, write as writeLog } from "./logging"
@@ -29,12 +32,13 @@ import {
   isOldLayoutEligible,
 } from "./onboarding"
 import {
-  getDefaultServerUrl,
-  preferAppEnv,
-  setDefaultServerUrl,
-  spawnLocalServer,
-  type SidecarListener,
-} from "./server"
+   getDefaultServerUrl,
+   preferAppEnv,
+   setDefaultServerUrl,
+   spawnLocalServer,
+   type SidecarListener,
+ } from "./server"
+ import { startSidecarFreezeWatchdog } from "./sidecar-freeze-watchdog"
 import { getStore } from "./store"
 import { hostnameForListen, resolveLocalServerConfig } from "./local-server-config"
 import { getUpdaterCheckOnStartup, setupAutoUpdater, showUpdaterDialog } from "./updater"
@@ -72,6 +76,7 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
 let server: SidecarListener | null = null
+let sidecarFreezeWatchdog: { stop: () => void } | undefined
 
 const pendingDeepLinks: string[] = []
 
@@ -121,18 +126,20 @@ function ensureLoopbackNoProxy() {
 const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
 
-  // on macOS apps run in `/` which can cause issues with ripgrep
-  try {
-    process.chdir(homedir())
-  } catch {}
-
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
   const instanceDir = parseInstanceDirArg(process.argv)
   const instanceLayout = instanceDir ? resolveInstanceLayout(instanceDir) : undefined
   if (instanceLayout) {
     ensureInstanceLayout(instanceLayout)
     process.env.OPENCODE_INSTANCE_DIR = instanceLayout.instanceDir
+    writePortableUserDataSeed(instanceLayout.userData)
   }
+  // Host installs: macOS apps start in `/`, which breaks ripgrep.
+  // Portable instances must not inherit the real user homedir as cwd —
+  // sidecar would treat C:\Users\... as the first project and freeze.
+  try {
+    process.chdir(resolveStartupCwd({ instanceHome: instanceLayout?.home, hostHome: homedir() }))
+  } catch {}
   const onboardingTestRoot = ((): string | undefined => {
     if (instanceLayout) return
     if (!TEST_ONBOARDING) return
@@ -190,6 +197,8 @@ const main = Effect.gen(function* () {
       .slice(1, 8)
       .join("\n")
     writeLog("utility", "stopSidecars called", { stack })
+    sidecarFreezeWatchdog?.stop()
+    sidecarFreezeWatchdog = undefined
     await killSidecar()
     wslServers.stopAll()
   }
@@ -346,10 +355,16 @@ const main = Effect.gen(function* () {
     },
   })
   registerWslIpcHandlers(wslServers)
-  if (getUpdaterCheckOnStartup()) void updater.start()
-  const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
-  updateTimer.unref()
-  app.once("will-quit", () => clearInterval(updateTimer))
+  if (!isPortableUpdaterDisabled(instanceLayout?.instanceDir) && getUpdaterCheckOnStartup()) {
+    void updater.start()
+  }
+  const updateTimer = isPortableUpdaterDisabled(instanceLayout?.instanceDir)
+    ? undefined
+    : setInterval(() => void updater.check(), 10 * 60 * 1000)
+  updateTimer?.unref()
+  app.once("will-quit", () => {
+    if (updateTimer) clearInterval(updateTimer)
+  })
   yield* Effect.promise(() => startNetLog()).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
@@ -428,6 +443,39 @@ const main = Effect.gen(function* () {
         }),
       ),
     )
+
+    // Hard sidecar freeze detection (outside sidecar's own event loop).
+    // The in-process LAG probe stops logging when the loop hard-freezes,
+    // so the renderer watchdog sees only reconnect failures. This watchdog
+    // polls health from the main process and auto-relaunches after forensic
+    // collection, resetting the ~5min manual-restart window to ~40-50s.
+    try {
+      const watchdogDiagnosticsDir = join(spawnOptions.userDataPath, "diagnostics")
+      sidecarFreezeWatchdog = startSidecarFreezeWatchdog({
+        url: spawned.url,
+        username: spawned.username,
+        password: spawned.password,
+        diagnosticsDir: watchdogDiagnosticsDir,
+        log: {
+          info: (msg: unknown, meta?: unknown) => logger.log(String(msg), meta as never),
+          warn: (msg: unknown, meta?: unknown) => logger.warn(String(msg), meta as never),
+          error: (msg: unknown, meta?: unknown) => logger.error(String(msg), meta as never),
+        },
+        onFrozen: async (report) => {
+          logger.error("sidecar freeze watchdog triggered - relaunching app", { ...report, port: new URL(spawned.url).port })
+          writeLog("utility", "sidecar freeze detected", report as never, "error")
+          sidecarFreezeWatchdog?.stop()
+          sidecarFreezeWatchdog = undefined
+          setAppQuitting()
+          await killSidecar()
+          wslServers.stopAll()
+          app.relaunch()
+          app.quit()
+        },
+      })
+    } catch (error) {
+      logger.warn("failed to start sidecar freeze watchdog", error)
+    }
 
     logger.log("loading task finished")
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)

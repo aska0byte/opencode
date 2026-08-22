@@ -677,9 +677,11 @@ async function resolveExternalPlugins(list: ConfigPlugin.Origin[], wait: () => P
   return PluginLoader.loadExternal({
     items: list,
     kind: "tui",
-    wait: async () => {
-      await wait().catch(() => {})
-    },
+    wait: ConfigPlugin.needsDependencyWait(list)
+      ? async () => {
+          await wait().catch(() => {})
+        }
+      : undefined,
     finish: async (loaded, origin, retry) => {
       const mod = await Promise.resolve()
         .then(() => readV1Plugin(loaded.mod as Record<string, unknown>, loaded.spec, "tui") as TuiPluginModule)

@@ -64,6 +64,13 @@ export class PortableInstanceError extends Error {
   }
 }
 
+export function shouldSkipBackgroundInstall(dir: string, instanceDir = process.env.OPENCODE_INSTANCE_DIR) {
+  if (!instanceDir) return false
+  const root = path.resolve(instanceDir)
+  const target = path.resolve(dir)
+  return target === root || target.startsWith(`${root}${path.sep}`)
+}
+
 export function parseInstanceDirArg(argv: readonly string[], cwd: string = process.cwd()): string | undefined {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]

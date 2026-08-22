@@ -9,6 +9,7 @@ import {
   parseInstanceConfig,
   parseInstanceDirArg,
   resolveInstanceLayout,
+  shouldSkipBackgroundInstall,
   resolveInstanceServer,
   resolveProductConfigPath,
   writeInstanceServerConfig,
@@ -118,6 +119,14 @@ describe("layout and env", () => {
     expect(env.OPENCODE_CONFIG_DIR).toBe(path.dirname(product))
     expect(env.OPENCODE_DB).toBe(layout.dbPath)
     expect(env.TMP).toBe(layout.tmp)
+  })
+
+  test("skips arborist only under the portable instance tree", () => {
+    const root = "D:\\app\\instance"
+    expect(shouldSkipBackgroundInstall(root, root)).toBe(true)
+    expect(shouldSkipBackgroundInstall(path.join(root, "APP_DATA", "config"), root)).toBe(true)
+    expect(shouldSkipBackgroundInstall("C:\\Users\\yao", root)).toBe(false)
+    expect(shouldSkipBackgroundInstall(root)).toBe(false)
   })
 })
 

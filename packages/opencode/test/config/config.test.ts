@@ -1767,6 +1767,32 @@ describe("resolvePluginSpec", () => {
   })
 })
 
+describe("needsDependencyWait", () => {
+  const origin = (spec: ConfigPluginV1.Spec): ConfigPlugin.Origin => ({
+    spec,
+    source: "",
+    scope: "global",
+  })
+
+  test("skips wait when every plugin is a local file", () => {
+    expect(
+      ConfigPlugin.needsDependencyWait([
+        origin("file:///E:/app/opencode_plugin/opencode-super/dist/index.js"),
+        origin("../opencode_plugin/opencode-dcp/dist/index.js"),
+      ]),
+    ).toBe(false)
+  })
+
+  test("waits when any plugin is an npm spec", () => {
+    expect(
+      ConfigPlugin.needsDependencyWait([
+        origin("file:///E:/app/opencode_plugin/opencode-super/dist/index.js"),
+        origin("oh-my-opencode@2.4.3"),
+      ]),
+    ).toBe(true)
+  })
+})
+
 describe("deduplicatePluginOrigins", () => {
   const dedupe = (plugins: ConfigPluginV1.Spec[]) =>
     ConfigPlugin.deduplicatePluginOrigins(

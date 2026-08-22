@@ -7,6 +7,7 @@ import type {
   WorkspaceAdapter as PluginWorkspaceAdapter,
 } from "@opencode-ai/plugin"
 import { Config } from "@/config/config"
+import { ConfigPlugin } from "@/config/plugin"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { ServerAuth } from "@/server/auth"
 import { CodexAuthPlugin } from "./openai/codex"
@@ -332,7 +333,7 @@ export const layer = Layer.effect(
         })
         if (flags.pure && cfg.plugin_origins?.length) {
         }
-        if (plugins.length) yield* config.waitForDependencies()
+        if (plugins.length && ConfigPlugin.needsDependencyWait(plugins)) yield* config.waitForDependencies()
 
         const loaded = yield* Effect.promise(() =>
           PluginLoader.loadExternal({

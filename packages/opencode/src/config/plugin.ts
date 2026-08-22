@@ -33,6 +33,10 @@ export function pluginSpecifier(plugin: ConfigPluginV1.Spec): string {
   return Array.isArray(plugin) ? plugin[0] : plugin
 }
 
+export function needsDependencyWait(plugins: readonly Origin[]): boolean {
+  return plugins.some((plugin) => !isPathPluginSpec(pluginSpecifier(plugin.spec)))
+}
+
 export function pluginOptions(plugin: ConfigPluginV1.Spec): ConfigPluginV1.Options | undefined {
   return Array.isArray(plugin) ? plugin[1] : undefined
 }

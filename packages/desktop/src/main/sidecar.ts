@@ -97,6 +97,12 @@ parentPort.on("message", (event) => {
 async function start(command: StartCommand) {
   const resolved = resolveStart(command)
   applyStartEnv(resolved)
+  if (command.instanceDir) {
+    const layout = resolveInstanceLayout(command.instanceDir)
+    try {
+      process.chdir(layout.home)
+    } catch {}
+  }
   diagLogPath = join(resolved.diagnosticsDir, "sidecar-diagnostics.log")
   mkdirSync(resolved.diagnosticsDir, { recursive: true })
 

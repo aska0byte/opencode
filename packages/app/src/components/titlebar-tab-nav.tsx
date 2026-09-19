@@ -209,18 +209,18 @@ export function TabNavItem(props: {
         data-titlebar-tab-link
         href={props.href}
         draggable={false}
-        onDragStart={(event) => {
+        onDragStart={(event: MouseEvent) => {
           event.preventDefault()
           event.stopPropagation()
         }}
-        onMouseDown={(event) => {
+        onMouseDown={(event: MouseEvent) => {
           // Navigate on mousedown to shave the press-release delay off tab switches.
           if (event.button !== 0) return
           if (editing()) return
           if (props.suppressNavigation?.()) return
           props.onNavigate()
         }}
-        onClick={(event) => {
+        onClick={(event: MouseEvent) => {
           event.preventDefault()
           // Mouse navigation already happened on mousedown; detail 0 means keyboard activation.
           if (event.detail > 0) return

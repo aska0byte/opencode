@@ -32,6 +32,7 @@ import {
   isOldLayoutEligible,
 } from "./onboarding"
 import {
+   checkHealth,
    getDefaultServerUrl,
    preferAppEnv,
    setDefaultServerUrl,
@@ -72,6 +73,16 @@ const APP_IDS: Record<string, string> = {
 }
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
+// Headless mode: spawn and host the sidecar only, never create a window or menu.
+// Used to run the sandboxed server process under a low-privilege account while
+// the GUI attaches from another account.
+const HEADLESS = process.env.OPENCODE_HEADLESS === "1"
+// Attach mode: skip spawning any sidecar and connect the GUI to an already
+// running server (sandbox host) instead.
+const ATTACH_URL = process.env.OPENCODE_ATTACH_URL?.trim() || undefined
+const ATTACH_USERNAME = process.env.OPENCODE_ATTACH_USERNAME?.trim() || null
+const ATTACH_PASSWORD = process.env.OPENCODE_ATTACH_PASSWORD || null
+const ATTACH_HEALTH_TIMEOUT_MS = 15_000
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 let logger: ReturnType<typeof initLogging>
@@ -121,6 +132,15 @@ function ensureLoopbackNoProxy() {
 
   upsert("NO_PROXY")
   upsert("no_proxy")
+}
+
+async function waitForAttachHealth(url: string, password: string | null, username = "opencode") {
+  const deadline = Date.now() + ATTACH_HEALTH_TIMEOUT_MS
+  for (;;) {
+    if (await checkHealth(url, password, username)) return true
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
 }
 
 const main = Effect.gen(function* () {
@@ -269,6 +289,7 @@ const main = Effect.gen(function* () {
   })
 
   app.on("window-all-closed", () => {
+    if (HEADLESS) return
     const stack = new Error().stack?.split("\n").slice(1, 10).join("\n")
     writeLog("main", "window-all-closed triggered", { stack })
     app.quit()
@@ -355,12 +376,13 @@ const main = Effect.gen(function* () {
     },
   })
   registerWslIpcHandlers(wslServers)
-  if (!isPortableUpdaterDisabled(instanceLayout?.instanceDir) && getUpdaterCheckOnStartup()) {
+  if (!HEADLESS && !isPortableUpdaterDisabled(instanceLayout?.instanceDir) && getUpdaterCheckOnStartup()) {
     void updater.start()
   }
-  const updateTimer = isPortableUpdaterDisabled(instanceLayout?.instanceDir)
-    ? undefined
-    : setInterval(() => void updater.check(), 10 * 60 * 1000)
+  const updateTimer =
+    HEADLESS || isPortableUpdaterDisabled(instanceLayout?.instanceDir)
+      ? undefined
+      : setInterval(() => void updater.check(), 10 * 60 * 1000)
   updateTimer?.unref()
   app.once("will-quit", () => {
     if (updateTimer) clearInterval(updateTimer)
@@ -378,6 +400,19 @@ const main = Effect.gen(function* () {
 
     ensureLoopbackNoProxy()
     useEnvProxy()
+
+    if (ATTACH_URL) {
+      logger.log("attaching to external server", { url: ATTACH_URL })
+      const healthy = yield* Effect.promise(() => waitForAttachHealth(ATTACH_URL, ATTACH_PASSWORD, ATTACH_USERNAME ?? undefined))
+      yield* Deferred.succeed(serverReady, {
+        url: ATTACH_URL,
+        username: ATTACH_USERNAME,
+        password: ATTACH_PASSWORD,
+      })
+      if (!healthy) logger.warn("attach target not healthy within timeout", { url: ATTACH_URL })
+      logger.log("loading task finished")
+      return
+    }
 
     if (SIDECAR_VERSION === "v2") {
       logger.log("spawning v2 sidecar")
@@ -481,6 +516,14 @@ const main = Effect.gen(function* () {
   }).pipe(forwardInitializationFailure(serverReady), Effect.forkChild)
 
   yield* Fiber.await(loadingTask)
+
+  // Headless host: keep the sidecar (and freeze watchdog) alive without any
+  // window, menu, or tray. The process stays resident through the utility
+  // process child and watchdog timers.
+  if (HEADLESS) {
+    logger.log("headless sidecar host running", { instanceDir: instanceLayout?.instanceDir })
+    return
+  }
 
   app.on("window-all-closed", () => {
     if (process.platform === "darwin") return

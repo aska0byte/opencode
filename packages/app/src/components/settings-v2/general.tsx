@@ -566,9 +566,7 @@ const onCheckUpdatesOnStartupChange = (checked: boolean) => {
       </div>
 
       <div class="settings-v2-tab-body">
-        <Show when={settings.general.layoutTransitionAvailable()}>
-          <InterfaceSection />
-        </Show>
+        <InterfaceSection />
 
         <Show when={settings.general.newInterfaceNoticeVisible()}>
           <InterfaceNoticeSection />

@@ -772,9 +772,7 @@ export const SettingsGeneral: Component = () => {
       </div>
 
       <div class="flex flex-col gap-8 w-full">
-        <Show when={settings.general.layoutTransitionAvailable()}>
-          <InterfaceSection />
-        </Show>
+        <InterfaceSection />
 
         <Show when={settings.general.newInterfaceNoticeVisible()}>
           <InterfaceNoticeSection />

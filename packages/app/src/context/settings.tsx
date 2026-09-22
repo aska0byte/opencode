@@ -58,7 +58,9 @@ export const monoDefault = "System Mono"
 export const sansDefault = "System Sans"
 export const terminalDefault = "JetBrainsMono Nerd Font Mono"
 const legacyNewLayoutDesignsDefault = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
-export const newLayoutDesignsDefault = true
+// Fork default: classic (v1) layout. The new v2 layout stays opt-in via the
+// "new interface designs" switch in the settings panels.
+export const newLayoutDesignsDefault = false
 // Existing users can switch layouts until local midnight on this date. Set new Date(YYYY, M-1, D) to show.
 export const oldInterfaceSunset = new Date(2099, 0, 1)
 const newLayoutDesignsUpgradeCutoff = "1.17.19"
@@ -250,13 +252,11 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     const sunset = oldInterfaceSunset
     const [oldInterfaceRetired, setOldInterfaceRetired] = createSignal(sunset ? Date.now() >= sunset.getTime() : false)
     const layoutTransitionClassified = createMemo(() => typeof store.general?.layoutTransitionEligible === "boolean")
-    const layoutTransitionEligible = withFallback(() => store.general?.layoutTransitionEligible, false)
+    const layoutTransitionEligible = withFallback(() => store.general?.layoutTransitionEligible, true)
     const newInterfaceNoticeDismissed = withFallback(() => store.general?.newInterfaceNoticeDismissed, false)
-    const layoutUpgrade = createMemo(() =>
-      launchState.classified && !launchState.migrationApplied
-        ? shouldEnableNewLayout(launchState.previous, platform.version)
-        : false,
-    )
+    // Fork: no automatic push to the v2 layout. Users switch manually via the
+    // "new interface designs" toggle in the settings panels.
+    const layoutUpgrade = createMemo(() => false)
     const layoutTransition = createMemo(() =>
       layoutTransitionState(!!sunset, layoutTransitionEligible(), oldInterfaceRetired(), newInterfaceNoticeDismissed()),
     )

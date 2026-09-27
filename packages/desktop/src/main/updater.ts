@@ -11,8 +11,17 @@ import { nativeT } from "./native-translations"
 const { autoUpdater } = pkg
 const key = "ready"
 
+/**
+ * Fork: the desktop updater is disabled entirely, matching cli/upgrade.ts and the
+ * HTTP upgrade endpoint. No startup check, no periodic check and no network
+ * traffic (the previous behaviour produced recurring net::ERR_CONNECTION_RESET
+ * noise in the logs). The update menu item reports the disabled state instead.
+ */
+export const DESKTOP_UPDATER_DISABLED = true
+
 /** Default true when unset — matches “check on startup” product default. */
 export function getUpdaterCheckOnStartup(): boolean {
+  if (DESKTOP_UPDATER_DISABLED) return false
   return getStore().get(UPDATER_CHECK_ON_STARTUP_KEY) !== false
 }
 
@@ -37,7 +46,7 @@ export function setupAutoUpdater(stop: () => Promise<void>) {
 
   const store = getStore("opencode.updater")
   return createUpdaterController({
-    enabled: isUpdaterEnabled(),
+    enabled: isUpdaterEnabled() && !DESKTOP_UPDATER_DISABLED,
     currentVersion: app.getVersion(),
     backend: {
       checkForUpdates: () => autoUpdater.checkForUpdates(),

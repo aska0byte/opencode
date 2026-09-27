@@ -42,7 +42,7 @@ import {
  import { startSidecarFreezeWatchdog } from "./sidecar-freeze-watchdog"
 import { getStore } from "./store"
 import { hostnameForListen, resolveLocalServerConfig } from "./local-server-config"
-import { getUpdaterCheckOnStartup, setupAutoUpdater, showUpdaterDialog } from "./updater"
+import { DESKTOP_UPDATER_DISABLED, getUpdaterCheckOnStartup, setupAutoUpdater, showUpdaterDialog } from "./updater"
 import { safeWebContentsURL } from "./window-state"
 import {
   getLastFocusedWindow,
@@ -376,13 +376,12 @@ const main = Effect.gen(function* () {
     },
   })
   registerWslIpcHandlers(wslServers)
-  if (!HEADLESS && !isPortableUpdaterDisabled(instanceLayout?.instanceDir) && getUpdaterCheckOnStartup()) {
+  const updaterDisabled =
+    HEADLESS || DESKTOP_UPDATER_DISABLED || isPortableUpdaterDisabled(instanceLayout?.instanceDir)
+  if (!updaterDisabled && getUpdaterCheckOnStartup()) {
     void updater.start()
   }
-  const updateTimer =
-    HEADLESS || isPortableUpdaterDisabled(instanceLayout?.instanceDir)
-      ? undefined
-      : setInterval(() => void updater.check(), 10 * 60 * 1000)
+  const updateTimer = updaterDisabled ? undefined : setInterval(() => void updater.check(), 10 * 60 * 1000)
   updateTimer?.unref()
   app.once("will-quit", () => {
     if (updateTimer) clearInterval(updateTimer)

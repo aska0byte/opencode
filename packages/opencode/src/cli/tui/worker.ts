@@ -68,7 +68,7 @@ export const rpc = {
       ppid: process.ppid,
       directory: input.directory,
     })
-    await upgrade().catch(() => {})
+    return upgrade().catch(() => undefined)
   },
   async reload() {
     await AppRuntime.runPromise(
